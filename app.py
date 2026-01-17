@@ -19,8 +19,17 @@ st.set_page_config(page_title="소중한밥상 대동여지도", layout="wide")
 @st.cache_resource
 def init_connection():
     try:
-        # 파일 대신 스트림릿 '금고(Secrets)'에서 정보를 가져오는 방식입니다.
-        creds_dict = st.secrets["gcp_service_account"]
+        # 스트림릿 금고(Secrets)에 저장된 열쇠 정보를 가져옵니다.
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ 스트림릿 Secrets 설정이 누락되었습니다. 설정 창에서 열쇠를 먼저 넣어주세요.")
+            return None
+            
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # 중요: 복사 과정에서 깨질 수 있는 줄바꿈(\n) 기호를 파이썬이 이해하도록 수정합니다.
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
         gc = gspread.service_account_from_dict(creds_dict)
         sh = gc.open("map_data")
         return sh
@@ -122,7 +131,7 @@ def get_color(owner_name):
     except: pass
     return "gray"
 
-# 4. 사이드바 (관리자 메뉴)
+# 사이드바 (관리자 메뉴)
 with st.sidebar:
     st.title("🔧 관리자 메뉴")
     
@@ -255,8 +264,9 @@ c_loc = [37.5665, 126.9780]; z = 11
 if 'sel_loc' in locals() and sel_loc:
     c_loc = [sel_loc.latitude, sel_loc.longitude]; z = 16
 elif st.session_state.territories:
-    last = st.session_state.territories[-1]
-    c_loc = [last['lat'], last['lon']]; z = 14
+    if len(st.session_state.territories) > 0:
+        last = st.session_state.territories[-1]
+        c_loc = [last['lat'], last['lon']]; z = 14
 
 m = folium.Map(location=c_loc, zoom_start=z)
 
