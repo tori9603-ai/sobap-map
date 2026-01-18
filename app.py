@@ -19,10 +19,21 @@ st.set_page_config(page_title="소중한밥상 대동여지도", layout="wide")
 @st.cache_resource
 def init_connection():
     try:
-        # 스트림릿 금고(Secrets)에 저장된 열쇠 정보를 가져옵니다.
-        if "gcp_service_account" not in st.secrets:
-            st.error("❌ 스트림릿 Secrets 설정이 누락되었습니다. 설정 창에서 열쇠를 먼저 넣어주세요.")
-            return None
+        # 스트림릿 금고(Secrets)에 저장된 열쇠를 딕셔너리 형태로 가져옵니다.
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # ⚠️ 사장님의 8시간 사투를 끝내줄 핵심 줄입니다!
+        # 복사 과정에서 깨진 역슬래시(\) 기호를 파이썬이 이해할 수 있는 줄바꿈 기호로 강제 수정합니다.
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
+        # 수정된 깨끗한 열쇠로 구글 시트에 접속합니다.
+        gc = gspread.service_account_from_dict(creds_dict)
+        sh = gc.open("map_data")
+        return sh
+    except Exception as e:
+        # 에러가 나면 화면에 에러 내용을 자세히 띄웁니다.
+        st.error(f"❌ 구글 시트 연결 실패! 에러 내용: {e}")
+        return None
             
         creds_dict = dict(st.secrets["gcp_service_account"])
         
@@ -286,3 +297,4 @@ for t in st.session_state.territories:
         folium.Circle([t['lat'], t['lon']], radius=100, color=color, fill=True).add_to(m)
 
 st_folium(m, width="100%", height=600)
+
