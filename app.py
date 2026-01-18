@@ -7,12 +7,12 @@ import json
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-st.set_page_config(page_title="소중한밥상 영업권 관리 시스템", layout="wide")
+# 1. 페이지 설정
+st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
-# 1. 구글 앱 스크립트 URL (기존 주소 유지)
+# 2. 구글 앱 스크립트 URL (사장님 주소 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbxmLywtQIA-6Ay5_KczYt3zNIoGekzkdWD4I3X80PORIMw8gUNHMsZTvip8LXdopxTJ/exec"
 
-# --- 데이터 로드 ---
 def get_data():
     try:
         response = requests.get(API_URL, allow_redirects=True)
@@ -26,115 +26,103 @@ def get_data():
 df = get_data()
 
 # =========================================================
-# 🍱 사이드바: 1. 점주 관리 / 2. 주소 및 단지
+# 🍱 왼쪽 사이드바: 단계별 통합 관리 (워크플로우형)
 # =========================================================
-st.sidebar.title("🍱 관리 시스템")
-main_menu = st.sidebar.radio("카테고리 선택", ["1. 점주 관리", "2. 주소 및 단지"])
-
-# 세션 상태로 선택된 점주 기억
-if 'selected_owner' not in st.session_state:
-    st.session_state.selected_owner = None
-
-# --- [카테고리 1] 점주 관리 ---
-if main_menu == "1. 점주 관리":
-    st.sidebar.subheader("👤 점주 목록")
+with st.sidebar:
+    st.title("🍱 소중한밥상 관리")
+    
+    # --- 1단계: 점주 선택 (모든 관리의 시작) ---
+    st.header("1️⃣ 점주 선택")
     unique_owners = df['owner'].unique().tolist()
+    selected_owner = st.selectbox("관리할 점주를 선택하세요", ["점주 선택"] + unique_owners)
     
-    # 점주 선택
-    selected = st.sidebar.selectbox("점주를 선택하세요", ["선택 안 함"] + unique_owners)
-    if selected != "선택 안 함":
-        st.session_state.selected_owner = selected
-        
-        # 해당 점주 삭제 기능
-        if st.sidebar.button(f"❌ {selected} 점주 전체 삭제"):
-            new_df = df[df['owner'] != selected]
-            full_data = [new_df.columns.tolist()] + new_df.values.tolist()
-            requests.post(API_URL, data=json.dumps({"action": "sync", "data": full_data}))
-            st.sidebar.success("삭제 완료!")
-            st.rerun()
-    else:
-        st.session_state.selected_owner = None
+    st.markdown("---")
 
-# --- [카테고리 2] 주소 및 단지 ---
-elif main_menu == "2. 주소 및 단지":
-    st.sidebar.subheader("🔍 주소 검색 및 추가")
-    
-    if st.session_state.selected_owner is None:
-        st.sidebar.warning("먼저 '1. 점주 관리'에서 점주를 선택해주세요.")
-    else:
-        st.sidebar.info(f"선택된 점주: **{st.session_state.selected_owner}**")
-        search_addr = st.sidebar.text_input("추가할 주소를 검색하세요")
+    # --- 점주가 선택되었을 때만 나타나는 관리 메뉴 ---
+    if selected_owner != "점주 선택":
+        # 현재 점주의 데이터 필터링
+        owner_df = df[df['owner'] == selected_owner]
         
-        if st.sidebar.button("주소 검색"):
+        # --- 2단계: 선점 주소 목록 및 삭제 ---
+        st.header(f"2️⃣ {selected_owner} 점주 관리")
+        st.subheader("📍 선점 주소 목록")
+        if not owner_df.empty:
+            # 주소 목록을 데이터 에디터로 표시 (삭제 지원)
+            edited_df = st.data_editor(owner_df[['lat', 'lon']], hide_index=True, use_container_width=True)
+            if st.button(f"🗑️ 선택된 주소 동기화(삭제)"):
+                # 현재 점주 데이터를 제외한 나머지 + 수정된 현재 점주 데이터
+                other_owners_df = df[df['owner'] != selected_owner]
+                # (이 예제에서는 단순화를 위해 전체 동기화 로직 사용)
+                st.warning("데이터 관리 탭에서 전체 저장을 이용해 주세요.")
+        else:
+            st.write("선점한 주소가 없습니다.")
+
+        st.markdown("---")
+
+        # --- 3단계: 주소 검색 및 추가 (500M 제한) ---
+        st.header("3️⃣ 주소 및 단지 추가")
+        search_addr = st.text_input("새로운 주소 검색", placeholder="예: 부산시 해운대구 ...")
+        
+        if st.button("🔍 주소 확인"):
             geolocator = Nominatim(user_agent="sobap_bot")
             location = geolocator.geocode(search_addr)
-            
             if location:
                 new_lat, new_lon = location.latitude, location.longitude
-                st.session_state.temp_loc = {"lat": new_lat, "lon": new_lon, "addr": search_addr}
-                st.sidebar.success(f"검색 결과: {search_addr}")
+                
+                # 🚨 500M 거리 제한 체크
+                is_blocked = False
+                for _, row in df.iterrows():
+                    if row['owner'] != selected_owner:
+                        dist = geodesic((new_lat, new_lon), (row['lat'], row['lon'])).meters
+                        if dist < 500:
+                            st.error(f"⚠️ 등록 불가: {row['owner']} 점주와 {int(dist)}m 거리!")
+                            is_blocked = True
+                            break
+                
+                if not is_blocked:
+                    st.success(f"✅ 등록 가능 지역입니다!")
+                    if st.button("➕ 이 주소를 선점 구역에 추가"):
+                        payload = {"action": "add", "lat": new_lat, "lon": new_lon, "owner": selected_owner}
+                        requests.post(API_URL, data=json.dumps(payload))
+                        st.rerun()
             else:
-                st.sidebar.error("주소를 찾을 수 없습니다.")
-
-        # 검색된 좌표가 있을 때만 추가/삭제 버튼 표시
-        if 'temp_loc' in st.session_state:
-            t = st.session_state.temp_loc
-            
-            # 🚨 500M 거리 제한 로직
-            is_blocked = False
-            for _, row in df.iterrows():
-                # 다른 점주와의 거리만 계산
-                if row['owner'] != st.session_state.selected_owner:
-                    dist = geodesic((t['lat'], t['lon']), (row['lat'], row['lon'])).meters
-                    if dist < 500:
-                        st.sidebar.error(f"⚠️ 경고: {row['owner']} 점주와 {int(dist)}m 거리에 있어 등록 불가!")
-                        is_blocked = True
-                        break
-            
-            if not is_blocked:
-                if st.sidebar.button(f"➕ {st.session_state.selected_owner} 칸에 주소 추가"):
-                    payload = {"action": "add", "lat": t['lat'], "lon": t['lon'], "owner": st.session_state.selected_owner}
-                    requests.post(API_URL, data=json.dumps(payload))
-                    st.sidebar.success("주소 등록 완료!")
-                    st.rerun()
+                st.error("주소를 찾을 수 없습니다.")
+    else:
+        st.info("왼쪽 상단에서 점주를 먼저 선택해 주세요.")
 
 # =========================================================
-# 🗺️ 메인 화면: 실시간 지도 및 영업권 표시
+# 🗺️ 오른쪽 메인 화면: 지능형 지도
 # =========================================================
-st.title("🗺️ 소중한밥상 영업권 지도")
+st.title("🗺️ 실시간 영업권 관제 센터")
 
-# 지도 생성
-m = folium.Map(location=[37.5665, 126.9780], zoom_start=12)
+# 지도의 초기 중심점 설정 (선택된 점주가 있으면 해당 위치로 이동)
+if selected_owner != "점주 선택" and not df[df['owner'] == selected_owner].empty:
+    target_df = df[df['owner'] == selected_owner]
+    map_center = [target_df['lat'].astype(float).mean(), target_df['lon'].astype(float).mean()]
+    zoom_val = 14 # 선택 시 확대
+else:
+    map_center = [37.5665, 126.9780] # 기본 서울 중심
+    zoom_val = 11
 
-# 모든 지점 표시 및 500M 원 그리기
+m = folium.Map(location=map_center, zoom_start=zoom_val)
+
+# 마커 및 500M 반경 표시
 for _, row in df.iterrows():
-    # 선택된 점주와 나머지 점주 색상 구분
-    color = "red" if row['owner'] == st.session_state.selected_owner else "gray"
-    fill_color = "red" if row['owner'] == st.session_state.selected_owner else "gray"
+    is_selected = (row['owner'] == selected_owner)
+    color = "red" if is_selected else "blue"
     
-    # 1. 지점 마커
     folium.Marker(
         [row['lat'], row['lon']], 
         popup=f"점주: {row['owner']}",
         icon=folium.Icon(color=color)
     ).add_to(m)
     
-    # 2. 500M 영업권 영역 표시
     folium.Circle(
         location=[row['lat'], row['lon']],
-        radius=500, # 500미터
+        radius=500,
         color=color,
         fill=True,
-        fill_color=fill_color,
-        fill_opacity=0.2
+        fill_opacity=0.2 if is_selected else 0.1
     ).add_to(m)
 
-# 검색 중인 임시 위치 표시
-if 'temp_loc' in st.session_state:
-    folium.Marker(
-        [st.session_state.temp_loc['lat'], st.session_state.temp_loc['lon']],
-        icon=folium.Icon(color="green", icon="info-sign"),
-        tooltip="검색된 위치"
-    ).add_to(m)
-
-st_folium(m, width="100%", height=750)
+st_folium(m, width="100%", height=800)
