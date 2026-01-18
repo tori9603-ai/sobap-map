@@ -19,12 +19,16 @@ def get_data():
         data = response.json()
         if len(data) > 1:
             df = pd.DataFrame(data[1:], columns=data[0])
-            # 위경도 데이터 정제
-            df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
-            df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
+            # 💡 [핵심 수정] 모든 점주 이름을 강제로 '글자(문자열)'로 변환하여 오류를 방지합니다.
+            df['owner'] = df['owner'].astype(str).str.strip()
+            # 위경도 숫자 변환 및 비정상 데이터(0 포함) 필터링 준비
+            df['lat'] = pd.to_numeric(df['lat'], errors='coerce').fillna(0)
+            df['lon'] = pd.to_numeric(df['lon'], errors='coerce').fillna(0)
+            # 이름이 '0'이거나 비어있는 행은 목록에서 제외
+            df = df[~df['owner'].isin(['0', '', 'nan'])]
             return df
         return pd.DataFrame(columns=['lat', 'lon', 'owner'])
-    except:
+    except Exception as e:
         return pd.DataFrame(columns=['lat', 'lon', 'owner'])
 
 df = get_data()
@@ -36,29 +40,26 @@ if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 
 # =========================================================
-# 🍱 왼쪽 사이드바: 점주 및 구역 관리
+# 🍱 왼쪽 사이드바: 관리 프로세스
 # =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 마스터")
     
-    # --- 1️⃣ 점주 관리 ---
     st.header("1️⃣ 점주 관리")
     
-    # 등록된 점주 리스트 추출
-    raw_owners = df['owner'].astype(str).tolist()
-    unique_owners = sorted(list(set([name.split('|')[0].strip() for name in raw_owners if name.strip()])))
-    
+    # 중복 제거 및 이름 정제
+    unique_owners = sorted(df['owner'].apply(lambda x: x.split('|')[0].strip()).unique().tolist())
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    # [신규 점주 추가] - 핵심 수정 부분
+    # [신규 점주 추가] 
     with st.expander("➕ 신규 점주 등록"):
         add_name = st.text_input("새로운 점주 성함")
         if st.button("구글 시트에 영구 등록"):
             if add_name and add_name not in unique_owners:
-                # 💡 [해결] 좌표 0,0으로 임시 행을 생성하여 시트에 이름을 저장합니다.
-                payload = {"action": "add", "lat": 0, "lon": 0, "owner": add_name}
+                # 💡 등록 시 문자열임을 명확히 하기 위해 이름 뒤에 공백 하나를 제거하고 전송
+                payload = {"action": "add", "lat": 0, "lon": 0, "owner": str(add_name).strip()}
                 requests.post(API_URL, data=json.dumps(payload))
-                st.success(f"'{add_name}' 점주님이 구글 시트에 등록되었습니다!")
+                st.success(f"'{add_name}' 점주님 등록 완료! 새로고침 후 선택해 주세요.")
                 st.rerun()
             else:
                 st.warning("이름을 입력하거나 중복을 확인하세요.")
@@ -69,21 +70,21 @@ with st.sidebar:
             if st.button("✏️ 이름 수정"): st.session_state.edit_mode = True
         with col_del:
             if st.button("🗑️ 점주 삭제"):
-                new_df = df[~df['owner'].str.contains(selected_owner)]
+                new_df = df[~df['owner'].str.contains(selected_owner, na=False)]
                 requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
                 st.rerun()
 
     st.markdown("---")
 
-    # --- 2️⃣ 현재 선점 목록 (장소명만 표시) ---
+    # --- 2️⃣ 선점 내역 관리 ---
     if selected_owner != "선택":
         st.header("📍 선점 내역")
-        # 해당 점주의 데이터 중 유효한 좌표가 있는 것만 표시
+        # 해당 점주 데이터 중 실제 좌표가 있는 것만 (lat 0 제외)
         owner_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
         
         if not owner_data.empty:
             for idx, row in owner_data.iterrows():
-                place_name = str(row['owner']).split('|')[-1].strip() if '|' in str(row['owner']) else str(row['owner'])
+                place_name = str(row['owner']).split('|')[-1].strip() if '|' in str(row['owner']) else "위치 정보 없음"
                 c1, c2 = st.columns([4, 1])
                 with c1:
                     if st.button(f"🏠 {place_name}", key=f"mv_{idx}"):
@@ -100,13 +101,13 @@ with st.sidebar:
 
         st.markdown("---")
 
-        # --- 3️⃣ 새 장소 검색 및 선점 ---
+        # --- 3️⃣ 새 장소 선점 ---
         st.header("2️⃣ 새 장소 선점")
         search_addr = st.text_input("아파트/동네 검색")
         
         if st.button("🔍 검색"):
             try:
-                geolocator = Nominatim(user_agent="sobap_master_final")
+                geolocator = Nominatim(user_agent="sobap_master_final_fix")
                 res = geolocator.geocode(search_addr, exactly_one=False, timeout=10)
                 if res: st.session_state.search_results = res
                 else: st.warning("결과 없음")
@@ -126,7 +127,6 @@ with st.sidebar:
             t = st.session_state.temp_loc
             if st.button(f"🚩 '{t['name']}' 선점!", use_container_width=True):
                 save_val = f"{selected_owner} | {t['name']}"
-                # 💡 기존의 임시 데이터(0,0)가 있다면 삭제 후 선점하는 것이 좋습니다.
                 payload = {"action": "add", "lat": t['lat'], "lon": t['lon'], "owner": save_val}
                 requests.post(API_URL, data=json.dumps(payload))
                 st.session_state.temp_loc = None
@@ -139,9 +139,8 @@ st.title("🗺️ 소중한밥상 실시간 관제 센터")
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
 
-# 지도에 유효한 좌표만 마커 표시
 for _, row in df.iterrows():
-    if row['lat'] != 0 and not pd.isna(row['lat']):
+    if row['lat'] != 0:
         try:
             owner_only = str(row['owner']).split('|')[0].strip()
             is_mine = (owner_only == selected_owner)
