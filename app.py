@@ -19,7 +19,6 @@ def get_data():
         data = response.json()
         if len(data) > 1:
             df = pd.DataFrame(data[1:], columns=data[0])
-            # ⚠️ 추가된 안전 장치: 숫자가 아닌 데이터나 빈 칸은 제거합니다.
             df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
             df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
             df = df.dropna(subset=['lat', 'lon'])
@@ -46,7 +45,6 @@ with st.sidebar:
     unique_owners = df['owner'].unique().tolist()
     selected_owner = st.selectbox("관리할 점주 선택", ["점주 선택"] + unique_owners)
     
-    # 점주 선택 시 지도 자동 이동
     if selected_owner != "점주 선택" and selected_owner != st.session_state.last_selected:
         owner_df = df[df['owner'] == selected_owner]
         if not owner_df.empty:
@@ -62,15 +60,21 @@ with st.sidebar:
         search_addr = st.text_input("검색할 주소 입력")
         
         if st.button("🔍 주소 위치 확인"):
-            geolocator = Nominatim(user_agent="sobap_bot_final")
-            location = geolocator.geocode(search_addr)
-            if location:
-                st.session_state.temp_loc = {"lat": location.latitude, "lon": location.longitude, "addr": search_addr}
-                st.session_state.map_center = [location.latitude, location.longitude]
-                st.session_state.map_zoom = 16
-                st.rerun()
-            else:
-                st.error("주소를 찾을 수 없습니다.")
+            try:
+                # 💡 [해결책] 유저 에이전트를 고유하게 변경하고 타임아웃을 10초로 늘렸습니다.
+                geolocator = Nominatim(user_agent="sobap_manager_pro_v1")
+                location = geolocator.geocode(search_addr, timeout=10)
+                
+                if location:
+                    st.session_state.temp_loc = {"lat": location.latitude, "lon": location.longitude, "addr": search_addr}
+                    st.session_state.map_center = [location.latitude, location.longitude]
+                    st.session_state.map_zoom = 16
+                    st.rerun()
+                else:
+                    st.warning("정확한 주소를 찾을 수 없습니다. 주소를 다시 확인해 주세요.")
+            except Exception as e:
+                # 💡 [해결책] GeocoderUnavailable 에러 발생 시 안내 메시지 출력
+                st.error("현재 주소 서비스 연결이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.")
 
         if st.session_state.temp_loc:
             st.markdown("---")
@@ -96,38 +100,23 @@ with st.sidebar:
                     st.rerun()
 
 # =========================================================
-# 🗺️ 오른쪽 메인 화면: 지능형 지도
+# 🗺️ 오른쪽 메인 화면: 실시간 지도
 # =========================================================
 st.title("🗺️ 소중한밥상 실시간 영업권 지도")
 
-# 지도 생성
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
 
-# ⚠️ 에러 방지를 위해 위도/경도가 올바른 데이터만 마커를 찍습니다.
 for _, row in df.iterrows():
     try:
         is_mine = (row['owner'] == selected_owner)
         color = "red" if is_mine else "blue"
-        
-        folium.Marker(
-            [float(row['lat']), float(row['lon'])], 
-            popup=f"점주: {row['owner']}", 
-            icon=folium.Icon(color=color)
-        ).add_to(m)
-        
-        folium.Circle(
-            location=[float(row['lat']), float(row['lon'])], 
-            radius=500, 
-            color=color, 
-            fill=True, 
-            fill_opacity=0.15
-        ).add_to(m)
-    except:
-        continue # 데이터에 문제가 있는 행은 그냥 건너뜁니다.
+        folium.Marker([float(row['lat']), float(row['lon'])], popup=f"점주: {row['owner']}", icon=folium.Icon(color=color)).add_to(m)
+        folium.Circle(location=[float(row['lat']), float(row['lon'])], radius=500, color=color, fill=True, fill_opacity=0.15).add_to(m)
+    except: continue
 
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=500, color="green", dash_array='5, 5').add_to(m)
 
-st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
+st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}_{st.session_state.map_zoom}")
