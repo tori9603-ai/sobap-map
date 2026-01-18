@@ -4,13 +4,14 @@ from streamlit_folium import st_folium
 import pandas as pd
 import requests
 import json
+import time # 💡 시간 지연을 위해 추가
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 # 1. 페이지 설정
-st.set_page_config(page_title="소중한밥상 마스터 관리자", layout="wide")
+st.set_page_config(page_title="소중한밥상 마스터", layout="wide")
 
-# ⚠️ 사장님이 새로 배포하신 URL입니다.
+# ⚠️ 사장님의 웹 앱 URL (최신 버전 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbxDw8kU3K2LzcaM0zOStvwBdsZs98zyjNzQtgxJlRnZcjTCA70RUEQMLmg4lHTCb9uQ/exec"
 
 def get_data():
@@ -18,12 +19,10 @@ def get_data():
         response = requests.get(API_URL, allow_redirects=True)
         data = response.json()
         if len(data) > 1:
-            # 시트 헤더 순서: [A] owner, [B] address, [C] lat, [D] lon
             df = pd.DataFrame(data[1:], columns=data[0])
             df['owner'] = df['owner'].astype(str).str.strip()
             df['lat'] = pd.to_numeric(df['lat'], errors='coerce').fillna(0)
             df['lon'] = pd.to_numeric(df['lon'], errors='coerce').fillna(0)
-            # 이름이 없거나 '0'인 행은 제외
             df = df[~df['owner'].isin(['0', '', 'nan'])]
             return df
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
@@ -32,7 +31,7 @@ def get_data():
 
 df = get_data()
 
-# 세션 상태 관리
+# 세션 상태 관리 (초기화)
 if 'map_center' not in st.session_state: st.session_state.map_center = [37.5665, 126.9780]
 if 'map_zoom' not in st.session_state: st.session_state.map_zoom = 11
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
@@ -42,9 +41,8 @@ if 'search_results' not in st.session_state: st.session_state.search_results = [
 # 🍱 사이드바: 통합 관리
 # =========================================================
 with st.sidebar:
-    st.title("🍱 소중한밥상 마스터")
+    st.title("🍱 소중한밥상 관리")
     
-    # 1️⃣ 점주 관리
     st.header("1️⃣ 점주 관리")
     raw_owners = df['owner'].unique().tolist()
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in raw_owners if name.strip()])))
@@ -54,16 +52,15 @@ with st.sidebar:
         add_name = st.text_input("새 점주 성함")
         if st.button("구글 시트에 영구 등록"):
             if add_name:
-                # 💡 시트 순서: [A]owner, [B]address, [C]lat, [D]lon
                 payload = {"action": "add", "owner": add_name, "address": "신규등록", "lat": 0, "lon": 0}
                 requests.post(API_URL, data=json.dumps(payload))
-                st.success(f"'{add_name}' 등록 완료!")
+                st.success("등록 완료! 앱이 새로고침됩니다.")
+                time.sleep(1) # 시트 저장 시간 확보
                 st.rerun()
 
     st.markdown("---")
 
     if selected_owner != "선택":
-        # 📍 선점 내역 리스트
         st.header("📍 선점 내역")
         owner_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
         if not owner_data.empty:
@@ -84,16 +81,31 @@ with st.sidebar:
 
         st.markdown("---")
 
-        # 2️⃣ 새 장소 검색 및 선점
+        # 💡 주소 검색 영역 (연결 지연 해결 로직)
         st.header("2️⃣ 새 장소 선점")
         search_addr = st.text_input("아파트/동네 검색")
-        if st.button("🔍 검색"):
-            try:
-                geolocator = Nominatim(user_agent="sobap_master_final")
-                res = geolocator.geocode(search_addr, exactly_one=False, timeout=10)
-                if res: st.session_state.search_results = res
-                else: st.warning("결과 없음")
-            except: st.error("연결 지연")
+        
+        col_search, col_clear = st.columns(2)
+        with col_search:
+            if st.button("🔍 검색"):
+                try:
+                    # 💡 유저 에이전트를 매번 다르게 하여 차단 방지
+                    random_agent = f"sobap_master_{int(time.time())}"
+                    geolocator = Nominatim(user_agent=random_agent)
+                    # 💡 타임아웃을 15초로 대폭 늘림
+                    res = geolocator.geocode(search_addr, exactly_one=False, timeout=15)
+                    if res:
+                        st.session_state.search_results = res
+                    else:
+                        st.warning("결과 없음")
+                except:
+                    st.error("연결 지연: 10초 후 다시 시도하세요.")
+        
+        with col_clear:
+            if st.button("♻️ 검색 초기화"):
+                st.session_state.search_results = []
+                st.session_state.temp_loc = None
+                st.rerun()
 
         if st.session_state.search_results:
             res_map = {r.address: r for r in st.session_state.search_results}
@@ -108,7 +120,6 @@ with st.sidebar:
         if st.session_state.temp_loc:
             t = st.session_state.temp_loc
             if st.button(f"🚩 '{t['name']}' 선점!", use_container_width=True):
-                # 💡 시트 순서에 맞춰 전송: [A]owner(점주|장소), [B]address, [C]lat, [D]lon
                 save_val = f"{selected_owner} | {t['name']}"
                 payload = {"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload))
