@@ -8,7 +8,7 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 # 1. 페이지 설정
-st.set_page_config(page_title="소중한밥상 관리자", layout="wide")
+st.set_page_config(page_title="소중한밥상 관리 시스템", layout="wide")
 
 # 2. 구글 앱 스크립트 URL
 API_URL = "https://script.google.com/macros/s/AKfycbxmLywtQIA-6Ay5_KczYt3zNIoGekzkdWD4I3X80PORIMw8gUNHMsZTvip8LXdopxTJ/exec"
@@ -36,105 +36,122 @@ if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 
 # =========================================================
-# 🍱 사이드바: 직관적인 점주 및 장소 관리
+# 🍱 왼쪽 사이드바: 장소 중심의 간결한 관리
 # =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     
     # 1️⃣ 점주 선택
     st.header("1️⃣ 점주 선택")
-    all_owners = sorted(list(set([str(name).split('|')[0].strip() for name in df['owner']])))
-    selected_owner = st.selectbox("점주를 선택하세요", ["선택"] + all_owners)
+    # 이름 정제 (점주 이름만 추출)
+    all_names = df['owner'].astype(str).tolist()
+    unique_owners = sorted(list(set([name.split('|')[0].strip() for name in all_names])))
+    
+    selected_owner = st.selectbox("관리할 점주를 선택하세요", ["선택"] + unique_owners)
     
     st.markdown("---")
 
     if selected_owner != "선택":
-        # 📂 선점 목록 (장소명만 간단히 표시)
+        # 📂 [개선] 현재 선점 목록 (장소 이름만 표시)
         st.header("📍 현재 선점 목록")
-        # 해당 점주의 데이터만 추출
-        owner_df = df[df['owner'].str.contains(selected_owner, na=False)]
+        # 해당 점주 데이터 필터링
+        owner_data = df[df['owner'].str.contains(selected_owner, na=False)]
         
-        if not owner_df.empty:
-            for idx, row in owner_df.iterrows():
-                # '|' 뒤의 주소만 가져오기 (없으면 전체 표시)
-                place_display = str(row['owner']).split('|')[-1].strip() if '|' in str(row['owner']) else str(row['owner'])
+        if not owner_data.empty:
+            for idx, row in owner_data.iterrows():
+                full_val = str(row['owner'])
+                # 💡 [핵심] '|' 기호 뒤의 '장소 이름'만 가져옵니다.
+                if '|' in full_val:
+                    place_name = full_val.split('|')[-1].strip()
+                else:
+                    place_name = full_val # 옛날 데이터는 그대로 표시
                 
                 col1, col2 = st.columns([4, 1])
                 with col1:
-                    # 클릭하면 지도가 해당 위치로 이동
-                    if st.button(f"🏠 {place_display}", key=f"btn_{idx}"):
+                    # 클릭 시 해당 위치로 지도 이동
+                    if st.button(f"🏠 {place_name}", key=f"move_{idx}"):
                         st.session_state.map_center = [row['lat'], row['lon']]
                         st.session_state.map_zoom = 17
                         st.rerun()
                 with col2:
                     if st.button("삭제", key=f"del_{idx}"):
                         new_df = df.drop(idx)
-                        requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
+                        payload = {"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}
+                        requests.post(API_URL, data=json.dumps(payload))
                         st.rerun()
         else:
-            st.write("선점한 곳이 없습니다.")
+            st.write("선점한 내역이 없습니다.")
 
         st.markdown("---")
 
-        # 2️⃣ 주소 검색 및 추가
-        st.header("2️⃣ 새 장소 검색")
-        search_addr = st.text_input("아파트명/동네 입력")
+        # 2️⃣ 새 장소 검색
+        st.header("2️⃣ 새 장소 검색 및 추가")
+        search_addr = st.text_input("아파트명 또는 동네 입력", placeholder="예: 암남동 현대")
         
         if st.button("🔍 검색"):
             try:
-                geolocator = Nominatim(user_agent="sobap_simple_v1")
+                geolocator = Nominatim(user_agent="sobap_final_v6")
                 results = geolocator.geocode(search_addr, exactly_one=False, timeout=10)
                 if results:
                     st.session_state.search_results = results
+                    st.success(f"{len(results)}개의 결과 발견")
                 else:
-                    st.warning("결과가 없습니다.")
+                    st.warning("결과를 찾을 수 없습니다.")
             except:
-                st.error("연결 지연 중...")
+                st.error("연결 지연 중... 다시 시도하세요.")
 
         if st.session_state.search_results:
             res_map = {res.address: res for res in st.session_state.search_results}
-            selected_res = st.selectbox("정확한 주소 선택", list(res_map.keys()))
+            selected_res = st.selectbox("정확한 주소를 고르세요", list(res_map.keys()))
             
-            if st.button("📍 위치 확인"):
+            if st.button("📍 지도에서 위치 확인"):
                 t = res_map[selected_res]
-                st.session_state.temp_loc = {"lat": t.latitude, "lon": t.longitude, "name": selected_res.split(',')[0].strip()}
+                # 장소 이름만 짧게 추출 (첫 번째 단어)
+                short_name = selected_res.split(',')[0].strip()
+                st.session_state.temp_loc = {"lat": t.latitude, "lon": t.longitude, "name": short_name}
                 st.session_state.map_center = [t.latitude, t.longitude]
                 st.session_state.map_zoom = 17
                 st.rerun()
 
-        # 3️⃣ 100M 체크 후 선점
+        # 3️⃣ 최종 선점 (100M 체크)
         if st.session_state.temp_loc:
+            st.markdown("---")
             t = st.session_state.temp_loc
+            
             is_blocked = False
             for _, row in df.iterrows():
                 if selected_owner not in str(row['owner']):
                     if geodesic((t['lat'], t['lon']), (row['lat'], row['lon'])).meters < 100:
-                        st.error("⚠️ 100m 이내 타 점주 구역!")
+                        st.error("⚠️ 타 점주와 100m 이내입니다!")
                         is_blocked = True
                         break
             
             if not is_blocked:
                 if st.button(f"🚩 '{t['name']}' 선점!", use_container_width=True):
-                    # 저장할 때 '점주 | 장소명' 형식으로 저장 (불러올 때 편함)
-                    save_name = f"{selected_owner} | {t['name']}"
-                    requests.post(API_URL, data=json.dumps({"action": "add", "lat": t['lat'], "lon": t['lon'], "owner": save_name}))
+                    # 💡 [핵심] '점주명 | 장소명' 형식으로 저장
+                    save_val = f"{selected_owner} | {t['name']}"
+                    payload = {"action": "add", "lat": t['lat'], "lon": t['lon'], "owner": save_val}
+                    requests.post(API_URL, data=json.dumps(payload))
                     st.session_state.temp_loc = None
                     st.success("등록 완료!")
                     st.rerun()
 
 # =========================================================
-# 🗺️ 메인 화면: 지도 고정
+# 🗺️ 오른쪽 메인 화면: 지도 고정
 # =========================================================
-st.title("🗺️ 소중한밥상 관제 센터")
+st.title("🗺️ 소중한밥상 실시간 관제 센터")
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
 
 for _, row in df.iterrows():
     try:
-        is_mine = (selected_owner in str(row['owner']))
+        # 점주 이름만 따와서 색상 결정
+        owner_only = str(row['owner']).split('|')[0].strip()
+        is_mine = (owner_only == selected_owner)
         color = "red" if is_mine else "blue"
+        
         folium.Marker([row['lat'], row['lon']], popup=str(row['owner']), icon=folium.Icon(color=color)).add_to(m)
-        folium.Circle(location=[row['lat'], row['lon']], radius=100, color=color, fill=True, fill_opacity=0.2).add_to(m)
+        folium.Circle(location=[row['lat'], row['lon']], radius=100, color=color, fill=True, fill_opacity=0.15).add_to(m)
     except: continue
 
 if st.session_state.temp_loc:
