@@ -25,52 +25,59 @@ def get_data():
 
 df = get_data()
 
-# 세션 상태 초기화 (검색된 위치 및 지도 중심점 기억)
-if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
+# --- 세션 상태 관리 (지도 위치 제어의 핵심) ---
 if 'map_center' not in st.session_state: st.session_state.map_center = [37.5665, 126.9780]
 if 'map_zoom' not in st.session_state: st.session_state.map_zoom = 11
+if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
+if 'last_selected_owner' not in st.session_state: st.session_state.last_selected_owner = None
 
 # =========================================================
-# 🍱 왼쪽 사이드바: 단계별 통합 관리
+# 🍱 왼쪽 사이드바: 관리 프로세스
 # =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     
-    # --- 1단계: 점주 선택 ---
+    # --- 1️⃣ 점주 선택 및 지도 자동 이동 ---
     st.header("1️⃣ 점주 선택")
     unique_owners = df['owner'].unique().tolist()
     selected_owner = st.selectbox("관리할 점주 선택", ["점주 선택"] + unique_owners)
     
+    # 💡 [핵심 로직] 점주 선택 시 해당 위치로 지도 중심점 변경
+    if selected_owner != "점주 선택" and selected_owner != st.session_state.last_selected_owner:
+        owner_points = df[df['owner'] == selected_owner]
+        if not owner_points.empty:
+            # 해당 점주 지점들의 평균 위치로 이동
+            new_lat = owner_points['lat'].astype(float).mean()
+            new_lon = owner_points['lon'].astype(float).mean()
+            st.session_state.map_center = [new_lat, new_lon]
+            st.session_state.map_zoom = 14 # 선택 시 지도를 확대
+            st.session_state.last_selected_owner = selected_owner
+            st.rerun() # 설정을 적용하기 위해 즉시 새로고침
+
     st.markdown("---")
 
-    # --- 2단계: 주소 검색 및 시각적 확인 ---
+    # --- 2️⃣ 주소 검색 및 시각적 확인 ---
     if selected_owner != "점주 선택":
         st.header("2️⃣ 주소 검색 및 확인")
-        search_addr = st.text_input("검색할 주소 입력", placeholder="예: 부산시 해운대구 ...")
+        search_addr = st.text_input("검색할 주소 입력")
         
         if st.button("🔍 주소 위치 확인"):
             geolocator = Nominatim(user_agent="sobap_bot")
             location = geolocator.geocode(search_addr)
             if location:
-                # 검색된 위치 저장 및 지도 중심 이동
-                st.session_state.temp_loc = {
-                    "lat": location.latitude, 
-                    "lon": location.longitude, 
-                    "addr": search_addr
-                }
+                st.session_state.temp_loc = {"lat": location.latitude, "lon": location.longitude, "addr": search_addr}
                 st.session_state.map_center = [location.latitude, location.longitude]
-                st.session_state.map_zoom = 16 # 주소 확인을 위해 크게 확대
-                st.success("지도에서 초록색 핀 위치를 확인하세요!")
+                st.session_state.map_zoom = 16 # 주소 확인 시 더 크게 확대
+                st.rerun()
             else:
                 st.error("주소를 찾을 수 없습니다.")
 
-        # --- 3단계: 거리 제한 체크 및 선점 ---
+        # --- 3️⃣ 영업권 검토 및 선점 ---
         if st.session_state.temp_loc:
             st.markdown("---")
             st.header("3️⃣ 영업권 검토 및 선점")
             t = st.session_state.temp_loc
             
-            # 🚨 500M 거리 제한 체크
             is_blocked = False
             for _, row in df.iterrows():
                 if row['owner'] != selected_owner:
@@ -85,55 +92,28 @@ with st.sidebar:
                 if st.button(f"🚩 '{selected_owner}' 이름으로 선점!", use_container_width=True):
                     payload = {"action": "add", "lat": t['lat'], "lon": t['lon'], "owner": selected_owner}
                     requests.post(API_URL, data=json.dumps(payload))
-                    st.session_state.temp_loc = None # 선점 후 임시 핀 제거
-                    st.success("성공적으로 선점되었습니다!")
+                    st.session_state.temp_loc = None
+                    st.success("선점 성공!")
                     st.rerun()
-    else:
-        st.info("먼저 점주를 선택해 주세요.")
 
 # =========================================================
-# 🗺️ 오른쪽 메인 화면: 실시간 지도
+# 🗺️ 오른쪽 메인 화면: 지능형 지도
 # =========================================================
-st.title("🗺️ 실시간 영업권 관제 센터")
+st.title("🗺️ 소중한밥상 실시간 영업권 지도")
 
-# 지도 생성 (세션에 저장된 중심점과 줌 사용)
+# 지도 생성 (세션 상태의 중심점과 줌 레벨 사용)
 m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
 
-# 1. 기존 데이터 표시
 for _, row in df.iterrows():
     is_mine = (row['owner'] == selected_owner)
     color = "red" if is_mine else "blue"
     
-    folium.Marker(
-        [row['lat'], row['lon']], 
-        popup=f"점주: {row['owner']}",
-        icon=folium.Icon(color=color)
-    ).add_to(m)
-    
-    folium.Circle(
-        location=[row['lat'], row['lon']],
-        radius=500,
-        color=color,
-        fill=True,
-        fill_opacity=0.2 if is_mine else 0.1
-    ).add_to(m)
+    folium.Marker([row['lat'], row['lon']], popup=f"점주: {row['owner']}", icon=folium.Icon(color=color)).add_to(m)
+    folium.Circle(location=[row['lat'], row['lon']], radius=500, color=color, fill=True, fill_opacity=0.15).add_to(m)
 
-# 2. 검색 중인 임시 위치 (초록색 핀) 표시
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
-    folium.Marker(
-        [t['lat'], t['lon']],
-        icon=folium.Icon(color="green", icon="star"),
-        tooltip="여기가 맞나요?",
-        popup="검색된 위치 (확인 후 왼쪽 선점 버튼 클릭)"
-    ).add_to(m)
-    # 확인용 500m 가이드 라인
-    folium.Circle(
-        location=[t['lat'], t['lon']],
-        radius=500,
-        color="green",
-        dash_array='5, 5',
-        fill=False
-    ).add_to(m)
+    folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
+    folium.Circle(location=[t['lat'], t['lon']], radius=500, color="green", dash_array='5, 5').add_to(m)
 
-st_folium(m, width="100%", height=800)
+st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
