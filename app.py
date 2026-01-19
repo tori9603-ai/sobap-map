@@ -67,14 +67,10 @@ def get_data_cached(api_url):
 
 df = get_data_cached(API_URL)
 
-# ⭐ 지명 간소화 로직 (콤마 기준으로 첫 번째만 남김)
+# 지명 간소화 로직
 def simplify_name(full_name):
-    # 1. [지점] 이나 [동네] 꼬리표 제거
     clean = full_name.replace("[지점]", "").replace("[동네]", "").strip()
-    # 2. 콤마(,)가 있다면 가장 앞에 있는 핵심 지명만 추출
-    if "," in clean:
-        clean = clean.split(",")[0].strip()
-    # 3. 불필요한 공백 제거 후 반환
+    if "," in clean: clean = clean.split(",")[0].strip()
     return clean
 
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
@@ -98,44 +94,47 @@ with st.sidebar:
     st.write("---")
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
+    # ⭐ [기능 업데이트] 선점 내역 그룹화 및 수정 버튼 제거
     if selected_owner != "선택":
         st.markdown("---")
         st.header("📍 선점 내역")
         owner_data = df[df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         
         if not owner_data.empty:
-            for idx, row in owner_data.iterrows():
-                # ⭐ [핵심 수정] 리스트에 보일 이름을 짧게 가공
-                full_place_info = row['owner'].split('|')[-1].strip()
-                short_display = simplify_name(full_place_info)
-                
-                col1, col2, col3 = st.columns([2.5, 1, 1])
-                with col1:
-                    # 짧아진 이름으로 버튼 생성
-                    if st.button(f"🏠 {short_display}", key=f"goto_{idx}", use_container_width=True):
-                        st.session_state.map_center = [row['lat'], row['lon']]
-                        st.rerun()
-                with col2:
-                    if st.button("📝", key=f"edit_btn_{idx}"):
-                        st.session_state.edit_idx = idx
-                with col3:
-                    if st.button("❌", key=f"del_btn_{idx}"):
-                        delete_payload = {"action": "delete", "row_index": int(idx) + 2}
-                        requests.post(API_URL, data=json.dumps(delete_payload))
-                        st.cache_data.clear(); time.sleep(1); st.rerun()
+            # 그룹 분리: 지점 vs 동네
+            pts = owner_data[~owner_data['owner'].str.contains("\[동네\]")]
+            neighborhoods = owner_data[owner_data['owner'].str.contains("\[동네\]")]
 
-            if 'edit_idx' in st.session_state:
-                edit_row = df.loc[st.session_state.edit_idx]
-                st.info(f"수정 중: {simplify_name(edit_row['owner'].split('|')[-1].strip())}")
-                new_place_name = st.text_input("새로운 아파트/동네 이름 입력")
-                if st.button("이름 변경 완료"):
-                    if new_place_name:
-                        type_prefix = "[동네] " if "[동네]" in edit_row['owner'] else "[지점] "
-                        updated_owner = f"{selected_owner} | {type_prefix}{new_place_name}"
-                        update_payload = {"action": "update", "row_index": int(st.session_state.edit_idx) + 2, "new_owner": updated_owner}
-                        requests.post(API_URL, data=json.dumps(update_payload))
-                        del st.session_state.edit_idx
-                        st.cache_data.clear(); time.sleep(1); st.rerun()
+            # 1. 개별 지점 그룹
+            if not pts.empty:
+                st.markdown("##### 📍 개별 지점 (100m)")
+                for idx, row in pts.iterrows():
+                    short_display = simplify_name(row['owner'].split('|')[-1].strip())
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        if st.button(f"🏠 {short_display}", key=f"goto_{idx}", use_container_width=True):
+                            st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
+                    with col2:
+                        if st.button("❌", key=f"del_{idx}"):
+                            requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
+                            st.cache_data.clear(); time.sleep(1); st.rerun()
+
+            # 2. 동네 구역 그룹
+            if not neighborhoods.empty:
+                st.write("")
+                st.markdown("##### 🏘️ 동네 구역 (1km)")
+                for idx, row in neighborhoods.iterrows():
+                    short_display = simplify_name(row['owner'].split('|')[-1].strip())
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        if st.button(f"🏠 {short_display}", key=f"goto_{idx}", use_container_width=True):
+                            st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
+                    with col2:
+                        if st.button("❌", key=f"del_{idx}"):
+                            requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
+                            st.cache_data.clear(); time.sleep(1); st.rerun()
+        else:
+            st.info("선점한 구역이 없습니다.")
 
     st.markdown("---")
     st.header("2️⃣ 영업권 구역 선점")
@@ -146,8 +145,7 @@ with st.sidebar:
             results = get_location_alternative(search_addr)
             if results:
                 st.session_state.search_results = results
-                st.session_state.map_center = [results[0]['lat'], results[0]['lon']]
-                st.rerun()
+                st.session_state.map_center = [results[0]['lat'], results[0]['lon']]; st.rerun()
             else: st.error("주소를 찾을 수 없습니다.")
 
     if st.session_state.search_results:
@@ -155,8 +153,7 @@ with st.sidebar:
         sel = st.selectbox("정확한 위치를 선택하세요", list(res_options.keys()))
         if st.button("📍 위치 확인"):
             st.session_state.temp_loc = res_options[sel]
-            st.session_state.map_center = [st.session_state.temp_loc['lat'], st.session_state.temp_loc['lon']]
-            st.rerun()
+            st.session_state.map_center = [st.session_state.temp_loc['lat'], st.session_state.temp_loc['lon']]; st.rerun()
 
     if st.session_state.temp_loc and selected_owner != "선택":
         st.write("---")
@@ -170,17 +167,14 @@ with st.sidebar:
                     if str(row['owner']).split('|')[0].strip() == selected_owner: continue
                     dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
                     existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
-                    if dist < (radius_m + existing_radius) / 2:
-                        is_overlap = True; break
+                    if dist < (radius_m + existing_radius) / 2: is_overlap = True; break
             if is_overlap: st.error("중첩되는 구역이 있습니다.")
             else:
                 prefix = "[동네] " if t['is_area'] else "[지점] "
-                clean_name = t['display_name'].split(']')[-1].strip()
-                save_val = f"{selected_owner} | {prefix}{clean_name}"
+                save_val = f"{selected_owner} | {prefix}{simplify_name(t['display_name'])}"
                 payload = {"action": "add", "owner": save_val, "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-                st.session_state.temp_loc = None
-                st.cache_data.clear(); time.sleep(1); st.rerun()
+                st.session_state.temp_loc = None; st.cache_data.clear(); time.sleep(1); st.rerun()
 
 # --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
