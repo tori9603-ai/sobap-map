@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인
+# 1. 페이지 설정 및 디자인 (마스터코딩 고유 디자인)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -27,12 +27,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ 사장님 마스터코딩 정보 (최신 URL 유지)
+# ⚠️ 사장님 마스터코딩 최신 URL (veXED...G9S)
 API_URL = "https://script.google.com/macros/s/AKfycbwyveXED04ihVIn8TjJOkiLrlY4vCZVAY_g7SbGbQ5ndKPFzeYPA7kbU8h4SBiQoG9S/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-SONGDO_HQ = [37.385, 126.654] #
+SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사
 
-# --- 세션 상태 초기화 (오류 방지 필수 로직) ---
+# --- 세션 상태 초기화 ---
 if 'df' not in st.session_state: st.session_state.df = pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -87,82 +87,57 @@ with st.sidebar:
     if st.button("🔄 최근 데이터 가져오기", use_container_width=True):
         st.session_state.df = fetch_data(API_URL); st.rerun()
 
+    # --- 1. 점주 관리 ---
     st.header("👤 점주 관리")
     with st.expander("➕ 신규 점주 등록"):
-        new_name = st.text_input("새 점주 성함")
+        new_o_name = st.text_input("새 점주 성함", key="new_o_input")
         if st.button("점주 영구 등록"):
-            if new_name:
-                requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}))
+            if new_o_name:
+                requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_o_name, "address": "신규등록", "lat": 0, "lon": 0}))
                 st.session_state.df = fetch_data(API_URL); st.rerun()
 
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in st.session_state.df['owner'] if name.strip() and name != 'owner'])))
     st.write("---")
-    
-    # 1️⃣ 점주 선택
     selected_owner = st.selectbox("1️⃣ 관리할 점주 선택", ["선택"] + unique_owners)
     
     selected_branch = "선택"
     if selected_owner != "선택":
         col_oe, col_od = st.columns(2)
-        if col_oe.button(f"📝 이름수정", key="btn_oe"): st.session_state.edit_owner = True
-        if col_od.button(f"❌ 점주삭제", key="btn_od"): st.session_state.delete_owner = True
+        if col_oe.button(f"📝 이름수정"): st.session_state.edit_owner = True
+        if col_od.button(f"❌ 점주삭제"): st.session_state.delete_owner = True
 
-        if st.session_state.get('edit_owner'):
-            new_o_name = st.text_input(f"'{selected_owner}'의 새 성함")
-            if st.button("수정 완료", key="confirm_oe"):
-                requests.post(API_URL, data=json.dumps({"action": "rename_owner_entirely", "old_name": selected_owner, "new_name": new_o_name}))
-                st.session_state.edit_owner = False
-                st.session_state.df = fetch_data(API_URL); st.rerun()
+        # ⭐ [벽돌 추가] 신규 지점 등록 버튼
+        with st.expander("➕ 신규 지점 추가"):
+            new_b_name = st.text_input(f"'{selected_owner}'님의 새 지점명")
+            if st.button("지점 추가 확정"):
+                if new_b_name:
+                    # 지점만 선등록 시 좌표 0으로 저장
+                    requests.post(API_URL, data=json.dumps({"action": "add", "owner": f"{selected_owner} | {new_b_name}", "address": "지점선등록", "lat": 0, "lon": 0}))
+                    st.session_state.df = fetch_data(API_URL); st.success("지점 등록 완료!"); time.sleep(1); st.rerun()
 
-        if st.session_state.get('delete_owner'):
-            st.warning(f"'{selected_owner}'님과 하위 모든 지점을 삭제할까요?")
-            if st.button("네, 전체 삭제합니다", key="confirm_od"):
-                requests.post(API_URL, data=json.dumps({"action": "delete_owner_entirely", "owner_name": selected_owner}))
-                st.session_state.delete_owner = False
-                st.session_state.df = fetch_data(API_URL); st.rerun()
-
-        # 2️⃣ 지점 선택
+        # --- 2. 지점 관리 ---
         st.write("---")
         owner_data_raw = st.session_state.df[st.session_state.df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         branches = sorted(list(set([val.split('|')[1].strip() for val in owner_data_raw['owner'] if len(val.split('|')) >= 2])))
+        
         selected_branch = st.selectbox("2️⃣ 관리할 지점 선택", ["선택"] + branches)
         
         if selected_branch != "선택":
-            # ⭐ 지점 수정/삭제 버튼 추가
             col_be, col_bd = st.columns(2)
-            if col_be.button(f"📝 지점수정", key="btn_be"): st.session_state.edit_branch = True
-            if col_bd.button(f"❌ 지점삭제", key="btn_bd"): st.session_state.delete_branch = True
-
-            if st.session_state.get('edit_branch'):
-                new_b_name = st.text_input(f"'{selected_branch}'의 새 이름")
-                if st.button("지점 수정 완료", key="confirm_be"):
-                    requests.post(API_URL, data=json.dumps({"action": "rename_branch_entirely", "owner_name": selected_owner, "old_branch_name": selected_branch, "new_branch_name": new_b_name}))
-                    st.session_state.edit_branch = False
-                    st.session_state.df = fetch_data(API_URL); st.rerun()
-
-            if st.session_state.get('delete_branch'):
-                st.warning(f"'{selected_branch}' 지점의 모든 구역을 삭제할까요?")
-                if st.button("네, 지점 삭제합니다", key="confirm_bd"):
-                    requests.post(API_URL, data=json.dumps({"action": "delete_branch_entirely", "owner_name": selected_owner, "branch_name": selected_branch}))
-                    st.session_state.delete_branch = False
-                    st.session_state.df = fetch_data(API_URL); st.rerun()
+            if col_be.button(f"📝 지점수정"): st.session_state.edit_branch = True
+            if col_bd.button(f"❌ 지점삭제"): st.session_state.delete_branch = True
 
             st.write("---")
             st.markdown(f"#### 🏘️ {selected_branch} 구역 리스트")
             branch_data = owner_data_raw[owner_data_raw['owner'].str.contains(f"\|\s*{selected_branch}\s*\|", na=False)]
-            for idx, row in branch_data.iterrows():
+            # 실제 좌표가 있는 구역만 리스트업 (초기 등록 행 제외)
+            valid_areas = branch_data[branch_data['lat'] != 0]
+            for idx, row in valid_areas.iterrows():
                 short_name = simplify_name(row['owner'].split('|')[-1].strip())
                 c1, c2 = st.columns([4, 1])
                 if c1.button(f"🏠 {short_name}", key=f"go_{idx}", use_container_width=True):
                     st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
-                if c2.button("❌", key=f"del_{idx}"):
-                    st.session_state.confirm_delete_id = idx; st.rerun()
-                
-                if st.session_state.confirm_delete_id == idx:
-                    st.warning("삭제할까요?")
-                    if st.button("확인", key=f"y_{idx}"):
-                        requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
-                        st.session_state.df = fetch_data(API_URL); st.session_state.confirm_delete_id = None; st.rerun()
+                if c2.button("❌", key=f"del_{idx}"): st.session_state.confirm_delete_id = idx; st.rerun()
 
     st.markdown("---")
     st.header("3️⃣ 영업권 신규 선점")
@@ -215,4 +190,7 @@ for _, row in st.session_state.df.iterrows():
         folium.Marker([row['lat'], row['lon']], icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=rad, color=color, fill=True, fill_opacity=0.1).add_to(m)
 
-st_folium(m, width="100%", height=800, key="main_map")
+map_out = st_folium(m, width="100%", height=800, key="main_map")
+if map_out and map_out.get('last_clicked') and st.session_state.temp_loc:
+    st.session_state.temp_loc['lat'] = map_out['last_clicked']['lat']
+    st.session_state.temp_loc['lon'] = map_out['last_clicked']['lng']; st.rerun()
