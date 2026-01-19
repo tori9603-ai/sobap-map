@@ -15,16 +15,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 🔑 관제 센터 전용 암호 설정
-ACCESS_PASSWORD = "0119" #
+# 🔑 관제 센터 전용 암호
+ACCESS_PASSWORD = "0119" 
 
-# 💡 [UI 개선] 사이드바 배경 및 🆑 클릭 버튼 스타일 적용
+# 💡 [UI] 사이드바 배경 및 🆑 클릭 버튼 스타일
 st.markdown("""
     <style>
-        /* 사이드바 배경색 (연한 빨강) */
         [data-testid="stSidebar"] { background-color: #FFF0F0; }
-        
-        /* 사이드바 열기 버튼 (🆑 클릭 버튼 디자인) */
         [data-testid="stSidebarCollapsedControl"] {
             background-color: #FF4B4B !important; color: white !important;
             border-radius: 0 15px 15px 0 !important;
@@ -61,11 +58,10 @@ if not st.session_state.authenticated:
             st.error("암호가 올바르지 않습니다.")
     st.stop()
 
-# ⚠️ 최신 API URL 반영 (방금 발급받으신 주소입니다)
-API_URL = "https://script.google.com/macros/s/AKfycbyTD4XQzksZroybEeuHmMeflU0Zsy5lYAXoyvUXgI4XoHTIxhnW6yxJHspyBRI_N_6x/exec"
-KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" #
+# ⚠️ 최신 배포 URL 반영
+API_URL = "https://script.google.com/macros/s/AKfycbyMAJv4dHq42kRRHLkDwoGph6wctjYQu4az9_3zfW54XNCJ8sK3SGpUDsT0kOZZv9fr/exec"
+KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# 데이터 캐싱 (터보 속도 유지)
 @st.cache_data(ttl=60)
 def get_data_cached(api_url):
     try:
@@ -80,7 +76,6 @@ def get_data_cached(api_url):
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
     except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 주소에서 '대한민국' 제거 로직
 def parse_detailed_address(address_str):
     if not address_str or address_str == "대한민국": return "지정 위치"
     parts = [p.strip() for p in address_str.split(',')]
@@ -116,9 +111,8 @@ if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
-# --- 사이드바 관리 메뉴 ---
 with st.sidebar:
-    st.title("🍱 소중한밥상 관리") #
+    st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
     with st.expander("➕ 신규 점주 등록"):
         new_name = st.text_input("새 점주 성함")
@@ -190,7 +184,6 @@ with st.sidebar:
                 for _, row in df.iterrows():
                     if row['lat'] != 0:
                         row_owner_only = str(row['owner']).split('|')[0].strip()
-                        # 본인 구역 중복 선점 허용
                         if row_owner_only == selected_owner: continue
                         dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
                         existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
@@ -204,7 +197,6 @@ with st.sidebar:
                     st.session_state.temp_loc = None
                     clear_cache(); st.rerun()
 
-# --- 메인 화면: 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 for _, row in df.iterrows():
@@ -221,12 +213,11 @@ if st.session_state.temp_loc:
 
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 지도 클릭 미세 조정 로직
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
         try:
-            geolocator = Nominatim(user_agent=f"sobap_final_full_{int(time.time())}")
+            geolocator = Nominatim(user_agent=f"sobap_final_url_{int(time.time())}")
             location = geolocator.reverse((c_lat, c_lon), language='ko')
             full_addr = location.address if location else f"좌표: {c_lat:.4f}"
             detailed_name = parse_detailed_address(full_addr)
