@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인 (사장님 디자인 절대 유지)
+# 1. 페이지 설정 및 디자인 (사장님 디자인 100% 유지)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -30,7 +30,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ⚠️ 사장님 고유 정보 및 최신 배포 URL
-API_URL = "https://script.google.com/macros/s/AKfycbzwD6llL7fipt7d-SVRXlxftJet0HV5oVQYPAQuAsCxg2i9idA6ZcEq_edzI55a2gH1/exec"
+API_URL = "https://script.google.com/macros/s/AKfycbw4M6FNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
 # --- 데이터 로드 함수 ---
@@ -51,14 +51,13 @@ if 'search_results' not in st.session_state: st.session_state.search_results = [
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'prev_owner' not in st.session_state: st.session_state.prev_owner = "선택"
 if 'confirm_delete_id' not in st.session_state: st.session_state.confirm_delete_id = None
+if 'overlap_error' not in st.session_state: st.session_state.overlap_error = None
 
-# 지명 간소화
 def simplify_name(full_name):
     clean = full_name.replace("[지점]", "").replace("[동네]", "").strip()
     if "," in clean: clean = clean.split(",")[0].strip()
     return clean
 
-# 검색 엔진 (하이브리드)
 def get_location_alternative(query):
     results = []
     try:
@@ -82,7 +81,6 @@ def get_location_alternative(query):
 # --- 사이드바 ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
-    
     if st.button("🔄 전체 데이터 새로고침", use_container_width=True):
         st.session_state.df = fetch_data(API_URL); st.rerun()
 
@@ -128,6 +126,7 @@ with st.sidebar:
                                 requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
                                 st.session_state.df = fetch_data(API_URL); st.session_state.confirm_delete_id = None; st.rerun()
                             if st.button("취소", key=f"n_{idx}"): st.session_state.confirm_delete_id = None; st.rerun()
+        else: st.info("선점 내역이 없습니다.")
 
     st.markdown("---")
     st.header("2️⃣ 영업권 구역 선점")
@@ -141,53 +140,42 @@ with st.sidebar:
         res_opts = { r['display_name']: r for r in st.session_state.search_results }
         sel = st.selectbox("정확한 위치 선택", list(res_opts.keys()))
         
-        # 🟢 [기능 강화] 위치 확인 시 타 점주 중복 여부 실시간 체크
         if st.button("📍 위치 확인"):
             target = res_opts[sel]
             st.session_state.temp_loc = target
             st.session_state.map_center = [target['lat'], target['lon']]
             
-            # 다른 점주와 겹치는지 체크
+            # 중복 체크 로직
             new_radius = 1000 if target['is_area'] else 100
             blocking_owner = None
             for _, row in st.session_state.df.iterrows():
                 if row['lat'] != 0:
-                    current_row_owner = str(row['owner']).split('|')[0].strip()
-                    if current_row_owner == selected_owner: continue # 같은 점주는 패스
-                    
+                    curr_owner = str(row['owner']).split('|')[0].strip()
+                    if curr_owner == selected_owner: continue
                     dist = geodesic((target['lat'], target['lon']), (row['lat'], row['lon'])).meters
-                    existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
-                    if dist < (new_radius + existing_radius): # 반경이 서로 겹치면
-                        blocking_owner = current_row_owner
-                        break
-            
-            if blocking_owner:
-                st.session_state.overlap_error = f"❌ 등록 불가: {blocking_owner} 점주님의 영업권과 겹칩니다."
-            else:
-                st.session_state.overlap_error = None
+                    exist_r = 1000 if "[동네]" in str(row['owner']) else 100
+                    if dist < (new_radius + exist_r): blocking_owner = curr_owner; break
+            st.session_state.overlap_error = f"❌ 등록 불가: {blocking_owner} 점주님의 영업권과 겹칩니다." if blocking_owner else None
             st.rerun()
 
-    # 🟢 [피드백 출력] 위치 확인 결과에 따라 경고창 표시
-    if st.session_state.get('overlap_error'):
-        st.error(st.session_state.overlap_error)
+    if st.session_state.temp_loc:
+        st.info("💡 별의 위치가 정확하지 않다면 **지도의 원하는 지점을 클릭**하여 위치를 미세 조정하세요.")
+        if st.session_state.get('overlap_error'): st.error(st.session_state.overlap_error)
 
-    if st.session_state.temp_loc and selected_owner != "선택":
-        t = st.session_state.temp_loc
-        r = 1000 if t['is_area'] else 100
-        
-        # 중복 에러가 없을 때만 선점 버튼 활성화
-        if not st.session_state.get('overlap_error'):
-            if st.button(f"🚩 선점하기 ({r}m)", use_container_width=True):
+        if selected_owner != "선택" and not st.session_state.get('overlap_error'):
+            t = st.session_state.temp_loc
+            r = 1000 if t['is_area'] else 100
+            if st.button(f"🚩 이 위치로 최종 선점하기 ({r}m)", use_container_width=True):
                 prefix = "[동네] " if t['is_area'] else "[지점] "
-                payload = {"action": "add", "owner": f"{selected_owner} | {prefix}{simplify_name(t['display_name'])}", "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}
+                save_name = simplify_name(t['display_name'])
+                payload = {"action": "add", "owner": f"{selected_owner} | {prefix}{save_name}", "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload))
                 st.session_state.df = fetch_data(API_URL); st.session_state.temp_loc = None; st.rerun()
-        else:
-            st.warning("⚠️ 중역 지역이 해결되어야 선점이 가능합니다.")
 
 # --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
+
 for _, row in st.session_state.df.iterrows():
     if row['lat'] != 0:
         owner = str(row['owner']).split('|')[0].strip()
@@ -203,4 +191,28 @@ if st.session_state.temp_loc:
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color=color, icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=r, color=color, fill=False, dash_array='5, 5').add_to(m)
 
-st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
+# ⭐ [핵심 추가] 지도 클릭 이벤트 감지 및 별 위치 이동 로직
+map_out = st_folium(m, width="100%", height=800, key="main_map")
+
+if map_out and map_out.get('last_clicked'):
+    clicked_lat = map_out['last_clicked']['lat']
+    clicked_lon = map_out['last_clicked']['lng']
+    
+    # 별(임시 위치)이 활성화된 상태에서만 미세 조정 작동
+    if st.session_state.temp_loc:
+        # 1. 좌표 업데이트
+        st.session_state.temp_loc['lat'] = clicked_lat
+        st.session_state.temp_loc['lon'] = clicked_lon
+        
+        # 2. 이동한 새 위치 기준 중복 체크 재실행
+        new_radius = 1000 if st.session_state.temp_loc.get('is_area') else 100
+        blocking_owner = None
+        for _, row in st.session_state.df.iterrows():
+            if row['lat'] != 0:
+                curr_owner = str(row['owner']).split('|')[0].strip()
+                if curr_owner == selected_owner: continue
+                dist = geodesic((clicked_lat, clicked_lon), (row['lat'], row['lon'])).meters
+                exist_r = 1000 if "[동네]" in str(row['owner']) else 100
+                if dist < (new_radius + exist_r): blocking_owner = curr_owner; break
+        st.session_state.overlap_error = f"❌ 등록 불가: {blocking_owner} 점주님의 영업권과 겹칩니다." if blocking_owner else None
+        st.rerun()
