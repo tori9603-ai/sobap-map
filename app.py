@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인
+# 1. 페이지 설정 및 디자인 (마스터코딩 고유 디자인)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -27,7 +27,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ 사장님 마스터코딩 정보 (최신 URL 유지)
+# ⚠️ 사장님 마스터코딩 최신 정보
 API_URL = "https://script.google.com/macros/s/AKfycbwyveXED04ihVIn8TjJOkiLrlY4vCZVAY_g7SbGbQ5ndKPFzeYPA7kbU8h4SBiQoG9S/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 SONGDO_HQ = [37.385, 126.654] #
@@ -95,7 +95,7 @@ with st.sidebar:
     st.write("---")
     selected_owner = st.selectbox("1️⃣ 관리할 점주 선택", ["선택"] + unique_owners)
     
-    selected_branch = "선택" # 변수 초기화
+    selected_branch = "선택"
     if selected_owner != "선택":
         col_oe, col_od = st.columns(2)
         if col_oe.button(f"📝 이름수정"): st.session_state.edit_owner = True
@@ -130,10 +130,10 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("3️⃣ 영업권 신규 선점")
-    # ⭐ [벽돌 추가] 지점 선택 여부에 따른 자동화 로직
+    # ⭐ [입력 최적화] 지점 선택 시 등록 지점 자동 지정
     if selected_branch != "선택":
-        st.success(f"📍 현재 지점: **{selected_branch}**")
-        target_branch = selected_branch # 선택된 지점을 자동으로 등록용으로 사용
+        st.success(f"📍 등록 지점: **{selected_branch}**")
+        target_branch = selected_branch
     else:
         target_branch = st.text_input("등록할 지점명 (예: 송도1점)")
     
