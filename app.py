@@ -36,16 +36,18 @@ def get_location_smart(query):
         if res.status_code == 200 and res.json().get('documents'):
             docs = res.json()['documents']
             for d in docs:
+                # 안전하게 정보 추가
                 d['is_area'] = d.get('address_type') == 'REGION'
             return docs, "✅ 카카오 검색 성공"
     except: pass
 
     try:
-        geolocator = Nominatim(user_agent=f"sobap_area_{int(time.time())}")
+        geolocator = Nominatim(user_agent=f"sobap_area_fix_{int(time.time())}")
         res = geolocator.geocode(f"{query}, 대한민국", exactly_one=False, timeout=10)
         if res:
             results = []
             for r in res:
+                # 동네(행정구역)인지 판단
                 is_area = r.raw.get('class') in ['boundary', 'place'] and r.raw.get('type') in ['administrative', 'suburb', 'city_district']
                 results.append({"address_name": r.address, "y": r.latitude, "x": r.longitude, "is_area": is_area})
             return results, "⚠️ 비상용 엔진 사용 중"
@@ -54,6 +56,7 @@ def get_location_smart(query):
 
 df = get_data()
 
+# 세션 상태 초기화
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -83,21 +86,22 @@ with st.sidebar:
                 target = res_options[sel_res_addr]
                 st.session_state.temp_loc = {
                     "lat": float(target['y']), "lon": float(target['x']),
-                    "is_area": target.get('is_area', False),
+                    "is_area": target.get('is_area', False), # 정보가 없으면 기본값 False
                     "full_addr": sel_res_addr,
-                    "name": sel_res_addr.split(' ')[-1] if not target.get('is_area') else sel_res_addr.split(',')[0].strip()
+                    "name": sel_res_addr.split(' ')[-1] if not target.get('is_area', False) else sel_res_addr.split(',')[0].strip()
                 }
                 st.session_state.map_center = [float(target['y']), float(target['x'])]
                 st.rerun()
 
         if st.session_state.temp_loc:
             t = st.session_state.temp_loc
-            area_tag = "[동네] " if t['is_area'] else ""
+            area_tag = "[동네] " if t.get('is_area', False) else ""
             if st.button("🚩 해당 주소 선점하기", use_container_width=True):
                 save_val = f"{selected_owner} | {area_tag}{t['name']}"
                 payload = {"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload))
                 st.session_state.temp_loc = None
+                st.session_state.search_results = []
                 st.success("선점 완료!")
                 st.rerun()
 
@@ -110,15 +114,16 @@ for _, row in df.iterrows():
         full_info = str(row['owner'])
         owner_name = full_info.split('|')[0].strip()
         color = "red" if owner_name == selected_owner else "blue"
-        # 💡 [변경] 동네 선점 반경을 500m로 조정
+        # 이미 등록된 데이터는 [동네] 글자 여부로 판단
         radius_val = 500 if "[동네]" in full_info else 100
         folium.Marker([row['lat'], row['lon']], popup=full_info, icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=radius_val, color=color, fill=True, fill_opacity=0.15).add_to(m)
 
+# 💡 오류 발생 지점 수정: .get()을 사용하여 정보가 없어도 100m로 안전하게 처리
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
-    # 💡 [변경] 선점 확인용 원 반경도 500m로 조정
-    radius_val = 500 if t['is_area'] else 100
+    # 500m 반경 적용 (정보가 없으면 기본 100m)
+    radius_val = 500 if t.get('is_area', False) else 100
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=radius_val, color="green", dash_array='5, 5').add_to(m)
 
