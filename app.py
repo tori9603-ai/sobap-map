@@ -8,85 +8,6 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# ==========================================
-# ✨ [신규 추가] 사진 미리보기 설정 (마스터 코딩 외부)
-# ==========================================
-IMAGE_URL = "https://raw.githubusercontent.com/tori9603-ai/sobap-map/main/image_5.png"
-
-# 공유 시 로고와 설명이 뜨게 하는 메타 데이터 주입
-st.markdown(f"""
-    <head>
-        <meta property="og:title" content="소중한밥상 실시간 관제 센터">
-        <meta property="og:description" content="전국 지점 현황 및 영업권 실시간 관리 시스템">
-        <meta property="og:image" content="{IMAGE_URL}">
-        <meta property="og:type" content="website">
-    </head>
-    """, unsafe_allow_html=True)
-# ==========================================
-
-# 1. 페이지 설정 및 디자인 (여기서부터 사장님의 마스터코딩 원본입니다)
-st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
-
-# --- 🔐 보안 접속 블록 시작 ---
-def check_password():
-    """비밀번호 확인 후 통과 여부를 결정합니다."""
-    def password_entered():
-        if st.session_state["password"] == "0119":
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        st.title("🍱 소중한밥상 관리자 시스템")
-        st.markdown("---")
-        st.text_input("보안 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.title("🍱 소중한밥상 관리자 시스템")
-        st.markdown("---")
-        st.text_input("보안 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
-        st.error("❌ 비밀번호가 일치하지 않습니다.")
-        return False
-    return True
-
-# 보안 통과 시에만 아래 마스터코딩 실행
-if check_password():
-    # --- 🚀 [보존] 마스터코딩 원본 섹션 시작 ---
-    st.markdown("""
-        <style>
-            [data-testid="stSidebar"] { background-color: #FFF0F0; }
-            [data-testid="stSidebarCollapsedControl"] {
-                background-color: #FF4B4B !important; color: white !important;
-                border-radius: 0 15px 15px 0 !important; width: 160px !important; height: 65px !important;
-                display: flex !important; align-items: center !important; justify-content: center !important;
-                position: fixed !important; left: 0 !important; top: 20px !important;
-                box-shadow: 5px 5px 15px rgba(0,0,0,0.5) !important; z-index: 1000000 !important; cursor: pointer !important;
-            }
-            [data-testid="stSidebarCollapsedControl"]::after {
-                content: "🆑 메뉴열기" !important; font-weight: 900 !important; color: white !important; font-size: 17px !important;
-            }
-        </style>
-        """, unsafe_allow_html=True)
-
-    # API 및 본사 설정 (마스터코딩 원본 데이터)
-    API_URL = "https://script.google.com/macros/s/AKfycbyBZSNYE4mE0YKRvdp4GYjMLeJmwzBIGs3-EmJ2bBNr-yu-fazKw6wFodx_ypM5M2RT/exec"
-    KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-    SONGDO_HQ = [37.385, 126.654]
-
-    # ... 이후 모든 로직 동일 (중략) ...
-    # (사장님의 원본 코드가 아래에 그대로 이어집니다)
-# (이하 생략 - 사장님의 코드를 그대로 붙여넣으시면 됩니다)
-import streamlit as st
-import folium
-from streamlit_folium import st_folium
-import pandas as pd
-import requests
-import json
-import time
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
-
 # 1. 페이지 설정 및 디자인 (마스터코딩 고유 디자인 유지)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
@@ -309,3 +230,4 @@ if check_password():
         st.session_state.temp_loc['lat'] = map_out['last_clicked']['lat']
         st.session_state.temp_loc['lon'] = map_out['last_clicked']['lng']; st.rerun()
     # --- 🏁 마스터코딩 원본 섹션 끝 ---
+
