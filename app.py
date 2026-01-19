@@ -67,6 +67,15 @@ def get_data_cached(api_url):
 
 df = get_data_cached(API_URL)
 
+# 지명 간소화 로직 (새로 추가)
+def simplify_name(full_name):
+    # [지점] 이나 [동네] 꼬리표 제거 후 핵심만 추출
+    clean = full_name.replace("[지점]", "").replace("[동네]", "").strip()
+    # "아파트"가 포함된 경우 너무 길면 잘라내거나 핵심 키워드만 유지
+    if "아파트" in clean:
+        return clean.split("아파트")[0] + "아파트"
+    return clean
+
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
@@ -88,43 +97,38 @@ with st.sidebar:
     st.write("---")
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    # ⭐ [추가 기능] 선점 내역 리스트 (삭제 및 수정 버튼)
     if selected_owner != "선택":
         st.markdown("---")
         st.header("📍 선점 내역")
-        # 해당 점주의 데이터만 필터링 (정규식으로 정확히 점주 이름만 체크)
         owner_data = df[df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         
         if not owner_data.empty:
             for idx, row in owner_data.iterrows():
-                # '점주명 | [타입] 장소명' 에서 장소명만 추출
-                display_name = row['owner'].split('|')[-1].strip()
+                # ⭐ [수정 포인트] 지명 간소화 적용
+                original_display = row['owner'].split('|')[-1].strip()
+                short_display = simplify_name(original_display)
                 
-                # 가로로 이름, 수정, 삭제 버튼 배치
                 col1, col2, col3 = st.columns([2.5, 1, 1])
                 with col1:
-                    if st.button(f"🏠 {display_name}", key=f"goto_{idx}", use_container_width=True):
+                    # 간략해진 이름으로 버튼 표시
+                    if st.button(f"🏠 {short_display}", key=f"goto_{idx}", use_container_width=True):
                         st.session_state.map_center = [row['lat'], row['lon']]
                         st.rerun()
                 with col2:
-                    if st.button("📝", key=f"edit_btn_{idx}", help="이름 수정"):
+                    if st.button("📝", key=f"edit_btn_{idx}"):
                         st.session_state.edit_idx = idx
                 with col3:
-                    if st.button("❌", key=f"del_btn_{idx}", help="삭제"):
-                        # 구글 시트에서 삭제 (행 번호 전송: 데이터프레임 인덱스 + 2)
+                    if st.button("❌", key=f"del_btn_{idx}"):
                         delete_payload = {"action": "delete", "row_index": int(idx) + 2}
                         requests.post(API_URL, data=json.dumps(delete_payload))
-                        st.toast(f"{display_name} 삭제 중...")
                         st.cache_data.clear(); time.sleep(1); st.rerun()
 
-            # 수정 모드 활성화 시 입력창 표시
             if 'edit_idx' in st.session_state:
                 edit_row = df.loc[st.session_state.edit_idx]
                 st.info(f"선택한 구역: {edit_row['owner'].split('|')[-1].strip()}")
                 new_place_name = st.text_input("새로운 아파트/동네 이름 입력")
                 if st.button("이름 변경 완료"):
                     if new_place_name:
-                        # 기존 타입([지점]/[동네]) 유지하며 이름만 교체
                         type_prefix = "[동네] " if "[동네]" in edit_row['owner'] else "[지점] "
                         updated_owner = f"{selected_owner} | {type_prefix}{new_place_name}"
                         update_payload = {"action": "update", "row_index": int(st.session_state.edit_idx) + 2, "new_owner": updated_owner}
