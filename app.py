@@ -11,6 +11,15 @@ from geopy.distance import geodesic
 # 1. 페이지 설정 및 성능 최적화
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
+# 💡 [사장님 요청] 사이드바 색상 변경 (연한 빨강색)
+st.markdown("""
+    <style>
+        [data-testid="stSidebar"] {
+            background-color: #FFF0F0;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
 # ⚠️ 사장님 고유 정보
 API_URL = "https://script.google.com/macros/s/AKfycbxDw8kU3K2LzcaM0zOStvwBdsZs98zyjNzQtgxJlRnZcjTCA70RUEQMLmg4lHTCb9uQ/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
@@ -31,19 +40,15 @@ def get_data_cached(api_url):
     except:
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 💡 [개선] 주소 파싱 함수: '대한민국'을 제외하고 가장 구체적인 단위를 추출
+# 주소 파싱 함수 (대한민국 제거 및 구체적 지명 추출)
 def parse_detailed_address(address_str):
     if not address_str or address_str == "대한민국":
         return "지정 위치"
-    # 대한민국, 부산광역시, 서구, 암남동 -> [암남동, 서구, 부산광역시, 대한민국] 순으로 정렬되거나 반대일 수 있음
     parts = [p.strip() for p in address_str.split(',')]
-    # '대한민국' 단어 제거
     filtered_parts = [p for p in parts if p != "대한민국"]
-    # 가장 구체적인 부분(보통 리스트의 앞쪽이나 뒤쪽)을 선택
-    # Nominatim의 경우 보통 [건물/번지, 동, 구, 시] 순이므로 첫 번째 요소를 선택
     return filtered_parts[0] if filtered_parts else "지정 위치"
 
-# 유사 장소 검색 엔진
+# 유사 장소 검색 엔진 (캐싱 적용)
 @st.cache_data(ttl=3600)
 def get_location_smart(query, api_key):
     headers = {"Authorization": f"KakaoAK {api_key}"}
@@ -69,12 +74,15 @@ def clear_cache():
 
 df = get_data_cached(API_URL)
 
-# 세션 관리
+# 세션 상태 관리
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
+# =========================================================
+# 🍱 왼쪽 사이드바 (연한 빨강 배경 적용됨)
+# =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
@@ -89,6 +97,7 @@ with st.sidebar:
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
+    # 점주 변경 시 자동 지도 이동 로직
     if selected_owner != st.session_state.prev_selected_owner:
         st.session_state.prev_selected_owner = selected_owner
         if selected_owner != "선택":
@@ -131,7 +140,6 @@ with st.sidebar:
             sel_name = st.selectbox("정확한 장소를 선택하세요", list(res_options.keys()))
             if st.button("📍 선택한 위치 확인"):
                 target = res_options[sel_name]
-                # 💡 선택한 리스트명에서 구체적인 명칭 추출
                 detailed_name = parse_detailed_address(sel_name)
                 st.session_state.temp_loc = {
                     "lat": float(target['y']), "lon": float(target['x']),
@@ -166,7 +174,7 @@ with st.sidebar:
                     st.session_state.temp_loc = None
                     clear_cache(); st.rerun()
 
-# --- 메인 지도 ---
+# --- 메인 화면: 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
@@ -184,22 +192,17 @@ if st.session_state.temp_loc:
 
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 💡 [개선] 지도 클릭 시 주소에서 '대한민국' 제거하고 구체적인 지명만 추출
+# 지도 클릭 시 미세 조정 및 주소 추출
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
         try:
-            geolocator = Nominatim(user_agent=f"sobap_addr_fix_{int(time.time())}")
+            geolocator = Nominatim(user_agent=f"sobap_sidebar_color_{int(time.time())}")
             location = geolocator.reverse((c_lat, c_lon), language='ko')
             full_addr = location.address if location else f"좌표: {c_lat:.4f}"
-            # 대한민국, 부산광역시... 중 가장 구체적인 단어만 뽑음
             detailed_name = parse_detailed_address(full_addr)
         except:
             full_addr = f"좌표: {c_lat:.4f}"; detailed_name = "지정 위치"
 
-        st.session_state.temp_loc.update({
-            "lat": c_lat, "lon": c_lon, 
-            "full_addr": full_addr, 
-            "name": detailed_name
-        })
+        st.session_state.temp_loc.update({"lat": c_lat, "lon": c_lon, "full_addr": full_addr, "name": detailed_name})
         st.rerun()
