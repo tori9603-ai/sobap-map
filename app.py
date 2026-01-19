@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인 (마스터코딩 고유 디자인)
+# 1. 페이지 설정 및 디자인
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -27,12 +27,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ 사장님 마스터코딩 최신 정보
+# ⚠️ 사장님 마스터코딩 정보
 API_URL = "https://script.google.com/macros/s/AKfycbwyveXED04ihVIn8TjJOkiLrlY4vCZVAY_g7SbGbQ5ndKPFzeYPA7kbU8h4SBiQoG9S/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 SONGDO_HQ = [37.385, 126.654] #
 
-# --- 🛠️ 세션 상태 초기화 (오류 방지 필수 로직) ---
 if 'df' not in st.session_state: st.session_state.df = pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -57,14 +56,24 @@ def simplify_name(n):
     c = n.replace("[지점]", "").replace("[동네]", "").strip()
     return c.split(",")[0].strip() if "," in c else c
 
+# ⭐ [로직 업데이트] 주소 키워드 분석을 통한 반경 결정 함수
+def analyze_radius_type(query):
+    area_keywords = ['동', '읍', '면', '리']
+    specific_keywords = ['아파트', '빌라', '길', '로']
+    
+    # 동네 단위 우선 체크 (1km)
+    if any(k in query for k in area_keywords):
+        return True # is_area = True (1km)
+    return False # is_area = False (100m)
+
 def get_location_alternative(query):
     results = []
+    is_area = analyze_radius_type(query) # 키워드 분석 실행
     try:
         geolocator = Nominatim(user_agent="sojunghan_bapsang_manager")
         locations = geolocator.geocode(query, exactly_one=False, limit=5, country_codes='kr')
         if locations:
             for loc in locations:
-                is_area = any(x in query for x in ["동", "읍", "면", "리"])
                 results.append({"display_name": f"{'[동네] ' if is_area else '[지점] '} {loc.address}", "lat": loc.latitude, "lon": loc.longitude, "is_area": is_area})
     except: pass
     if not results:
@@ -72,7 +81,6 @@ def get_location_alternative(query):
         try:
             res = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=3).json()
             for d in res.get('documents', []):
-                is_area = any(x in query for x in ["동", "읍", "면", "리"])
                 results.append({"display_name": f"{'[동네] ' if is_area else '[지점] '} {d['place_name']} ({d['address_name']})", "lat": float(d['y']), "lon": float(d['x']), "is_area": is_area})
         except: pass
     return results
@@ -84,60 +92,35 @@ with st.sidebar:
         st.session_state.df = fetch_data(API_URL); st.rerun()
 
     st.header("👤 점주 관리")
-    with st.expander("➕ 신규 점주 등록"):
-        new_name = st.text_input("새 점주 성함")
-        if st.button("점주 영구 등록"):
-            if new_name:
-                requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}))
-                st.session_state.df = fetch_data(API_URL); st.rerun()
-
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in st.session_state.df['owner'] if name.strip() and name != 'owner'])))
-    st.write("---")
     selected_owner = st.selectbox("1️⃣ 관리할 점주 선택", ["선택"] + unique_owners)
     
     selected_branch = "선택"
     if selected_owner != "선택":
-        col_oe, col_od = st.columns(2)
-        if col_oe.button(f"📝 이름수정"): st.session_state.edit_owner = True
-        if col_od.button(f"❌ 점주삭제"): st.session_state.delete_owner = True
-        
-        st.write("---")
         owner_data_raw = st.session_state.df[st.session_state.df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         branches = sorted(list(set([val.split('|')[1].strip() for val in owner_data_raw['owner'] if len(val.split('|')) >= 2])))
-        
         selected_branch = st.selectbox("2️⃣ 관리할 지점 선택", ["선택"] + branches)
         
         if selected_branch != "선택":
-            col_be, col_bd = st.columns(2)
-            if col_be.button(f"📝 지점수정"): st.session_state.edit_branch = True
-            if col_bd.button(f"❌ 지점삭제"): st.session_state.delete_branch = True
-
             st.write("---")
             st.markdown(f"#### 🏘️ {selected_branch} 구역 리스트")
             branch_data = owner_data_raw[owner_data_raw['owner'].str.contains(f"\|\s*{selected_branch}\s*\|", na=False)]
             for idx, row in branch_data.iterrows():
-                short_name = simplify_name(row['owner'].split('|')[-1].strip())
+                area_name = simplify_name(row['owner'].split('|')[-1].strip())
                 c1, c2 = st.columns([4, 1])
-                if c1.button(f"🏠 {short_name}", key=f"go_{idx}", use_container_width=True):
+                if c1.button(f"🏠 {area_name}", key=f"go_{idx}", use_container_width=True):
                     st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
                 if c2.button("❌", key=f"del_{idx}"): st.session_state.confirm_delete_id = idx; st.rerun()
-                
-                if st.session_state.confirm_delete_id == idx:
-                    st.warning("삭제할까요?")
-                    if st.button("확인", key=f"y_{idx}"):
-                        requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
-                        st.session_state.df = fetch_data(API_URL); st.session_state.confirm_delete_id = None; st.rerun()
 
     st.markdown("---")
     st.header("3️⃣ 영업권 신규 선점")
-    # ⭐ [입력 최적화] 지점 선택 시 등록 지점 자동 지정
     if selected_branch != "선택":
         st.success(f"📍 등록 지점: **{selected_branch}**")
         target_branch = selected_branch
     else:
         target_branch = st.text_input("등록할 지점명 (예: 송도1점)")
     
-    search_addr = st.text_input("아파트명 또는 주소 입력", key="s_box")
+    search_addr = st.text_input("아파트/동네/도로명 입력", key="s_box")
     if st.button("🔍 위치 확인", use_container_width=True):
         if search_addr:
             res = get_location_alternative(search_addr)
@@ -148,6 +131,8 @@ with st.sidebar:
         sel = st.selectbox("정확한 위치 선택", list(res_opts.keys()))
         if st.button("📍 별 띄우기"):
             target = res_opts[sel]; st.session_state.temp_loc = target; st.session_state.map_center = [target['lat'], target['lon']]
+            
+            # ⭐ [중복 체크 업데이트] 가변 반경 로직 적용
             new_r = 1000 if target['is_area'] else 100
             blocking = None
             for _, row in st.session_state.df.iterrows():
@@ -176,9 +161,17 @@ for _, row in st.session_state.df.iterrows():
     if row['lat'] != 0:
         owner_name = str(row['owner']).split('|')[0].strip()
         color = "red" if owner_name == selected_owner else "blue"
+        # ⭐ [렌더링 업데이트] 저장된 데이터 기반 가변 반경 표시
         rad = 1000 if "[동네]" in str(row['owner']) else 100
         folium.Marker([row['lat'], row['lon']], icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=rad, color=color, fill=True, fill_opacity=0.1).add_to(m)
+
+if st.session_state.temp_loc:
+    t = st.session_state.temp_loc
+    r = 1000 if t['is_area'] else 100
+    color = "orange" if st.session_state.get('overlap_error') else "green"
+    folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color=color, icon="star")).add_to(m)
+    folium.Circle(location=[t['lat'], t['lon']], radius=r, color=color, dash_array='5, 5').add_to(m)
 
 map_out = st_folium(m, width="100%", height=800, key="main_map")
 if map_out and map_out.get('last_clicked') and st.session_state.temp_loc:
