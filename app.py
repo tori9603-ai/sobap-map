@@ -16,9 +16,9 @@ st.set_page_config(
 )
 
 # 🔑 관제 센터 전용 암호
-ACCESS_PASSWORD = "0119" 
+ACCESS_PASSWORD = "0119"
 
-# 💡 [UI] 사이드바 배경 및 🆑 클릭 버튼 스타일
+# 💡 [UI] 사이드바 배경 및 🆑 클릭 버튼 디자인 유지
 st.markdown("""
     <style>
         [data-testid="stSidebar"] { background-color: #FFF0F0; }
@@ -48,7 +48,6 @@ if 'authenticated' not in st.session_state:
 
 if not st.session_state.authenticated:
     st.title("🔐 소중한밥상 관제 센터 접속")
-    st.write("사장님이 지정하신 4자리 암호를 입력해 주세요.")
     input_pw = st.text_input("접속 암호", type="password")
     if st.button("접속하기"):
         if input_pw == ACCESS_PASSWORD:
@@ -58,9 +57,9 @@ if not st.session_state.authenticated:
             st.error("암호가 올바르지 않습니다.")
     st.stop()
 
-# ⚠️ 최신 배포 URL 반영
+# ⚠️ 최신 API URL 반영
 API_URL = "https://script.google.com/macros/s/AKfycbyMAJv4dHq42kRRHLkDwoGph6wctjYQu4az9_3zfW54XNCJ8sK3SGpUDsT0kOZZv9fr/exec"
-KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
+KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
 
 @st.cache_data(ttl=60)
 def get_data_cached(api_url):
@@ -76,24 +75,26 @@ def get_data_cached(api_url):
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
     except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
+# 주소 파싱 함수
 def parse_detailed_address(address_str):
     if not address_str or address_str == "대한민국": return "지정 위치"
     parts = [p.strip() for p in address_str.split(',')]
     filtered_parts = [p for p in parts if p != "대한민국"]
     return filtered_parts[0] if filtered_parts else "지정 위치"
 
+# 💡 스마트 검색 엔진 (유사 주소 리스트 반환 로직 강화)
 @st.cache_data(ttl=3600)
 def get_location_smart(query, api_key):
     headers = {"Authorization": f"KakaoAK {api_key}"}
     all_results = []
     try:
-        res_addr = requests.get(f"https://dapi.kakao.com/v2/local/search/address.json?query={query}", headers=headers, timeout=3).json()
+        res_addr = requests.get(f"https://dapi.kakao.com/v2/local/search/address.json?query={query}", headers=headers, timeout=5).json()
         if res_addr.get('documents'):
             for d in res_addr['documents']:
                 d['display_name'] = d['address_name']
                 d['is_area'] = d.get('address_type') == 'REGION'
                 all_results.append(d)
-        res_kw = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=3).json()
+        res_kw = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=5).json()
         if res_kw.get('documents'):
             for d in res_kw['documents']:
                 d['display_name'] = f"[{d.get('category_group_name', '장소')}] {d['place_name']} ({d['address_name']})"
@@ -152,18 +153,24 @@ with st.sidebar:
         st.markdown("---")
         st.header("2️⃣ 영업권 구역 선점")
         search_addr = st.text_input("아파트명 또는 주소 입력")
+        
+        # 💡 [핵심 변경] 검색 결과 리스트 표시 로직
         if st.button("🔍 위치 찾기", use_container_width=True):
             results = get_location_smart(search_addr, KAKAO_API_KEY)
             if results:
                 st.session_state.search_results = results
-                first = results[0]
-                st.session_state.map_center = [float(first['y']), float(first['x'])]
+                # 첫 번째 결과로 일단 지도 중심 이동
+                st.session_state.map_center = [float(results[0]['y']), float(results[0]['x'])]
                 st.rerun()
+            else:
+                st.warning("일치하는 주소가 없습니다. 다시 입력해 주세요.")
 
+        # 검색 결과가 있을 때만 선택 박스 노출
         if st.session_state.get('search_results'):
             res_options = { r['display_name']: r for r in st.session_state.search_results }
-            sel_name = st.selectbox("정확한 장소를 선택하세요", list(res_options.keys()))
-            if st.button("📍 선택한 위치 확인"):
+            sel_name = st.selectbox("가장 유사한 장소를 선택하세요", list(res_options.keys()))
+            
+            if st.button("📍 선택한 위치로 핀 이동"):
                 target = res_options[sel_name]
                 detailed_name = parse_detailed_address(sel_name)
                 st.session_state.temp_loc = {
@@ -195,8 +202,10 @@ with st.sidebar:
                     save_val = f"{selected_owner} | {('[동네] ' if t.get('is_area', False) else '')}{t['name']}"
                     requests.post(API_URL, data=json.dumps({"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}))
                     st.session_state.temp_loc = None
+                    st.session_state.search_results = []
                     clear_cache(); st.rerun()
 
+# --- 메인 지도 화면 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 for _, row in df.iterrows():
@@ -217,7 +226,7 @@ if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
         try:
-            geolocator = Nominatim(user_agent=f"sobap_final_url_{int(time.time())}")
+            geolocator = Nominatim(user_agent=f"sobap_final_list_{int(time.time())}")
             location = geolocator.reverse((c_lat, c_lon), language='ko')
             full_addr = location.address if location else f"좌표: {c_lat:.4f}"
             detailed_name = parse_detailed_address(full_addr)
