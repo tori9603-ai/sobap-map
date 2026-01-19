@@ -11,11 +11,44 @@ from geopy.distance import geodesic
 # 1. 페이지 설정 및 성능 최적화
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
-# 💡 [사장님 요청] 사이드바 색상 변경 (연한 빨강색)
+# 💡 [UI 개선] 사이드바 배경색 및 모바일 열기 버튼 스타일 강화
 st.markdown("""
     <style>
+        /* 1. 사이드바 배경색 (연한 빨강) */
         [data-testid="stSidebar"] {
             background-color: #FFF0F0;
+        }
+        
+        /* 2. 모바일/PC 사이드바 열기 버튼 (직관성 강화) */
+        [data-testid="stSidebarCollapsedControl"] {
+            background-color: #FF4B4B !important; /* 진한 빨강 포인트 */
+            color: white !important;
+            border-radius: 0 10px 10px 0 !important;
+            padding: 10px 15px !important;
+            width: auto !important;
+            height: 50px !important;
+            display: flex !important;
+            align-items: center !important;
+            left: 0 !important;
+            top: 20px !important;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        /* 버튼 내부 아이콘 색상 변경 */
+        [data-testid="stSidebarCollapsedControl"] svg {
+            fill: white !important;
+            width: 25px !important;
+            height: 25px !important;
+        }
+        
+        /* 버튼 옆에 "메뉴 열기" 문구 추가 */
+        [data-testid="stSidebarCollapsedControl"]::after {
+            content: " 🚩 메뉴 열기";
+            font-weight: bold !important;
+            color: white !important;
+            font-size: 16px !important;
+            margin-left: 5px !important;
+            white-space: nowrap;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -80,9 +113,7 @@ if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
-# =========================================================
-# 🍱 왼쪽 사이드바 (연한 빨강 배경 적용됨)
-# =========================================================
+# --- 사이드바 관리 메뉴 ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
@@ -97,7 +128,7 @@ with st.sidebar:
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    # 점주 변경 시 자동 지도 이동 로직
+    # 점주 변경 시 자동 지도 이동
     if selected_owner != st.session_state.prev_selected_owner:
         st.session_state.prev_selected_owner = selected_owner
         if selected_owner != "선택":
@@ -192,12 +223,12 @@ if st.session_state.temp_loc:
 
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 지도 클릭 시 미세 조정 및 주소 추출
+# 지도 클릭 시 미세 조정 및 상세 지명 자동 추출
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
         try:
-            geolocator = Nominatim(user_agent=f"sobap_sidebar_color_{int(time.time())}")
+            geolocator = Nominatim(user_agent=f"sobap_final_ui_{int(time.time())}")
             location = geolocator.reverse((c_lat, c_lon), language='ko')
             full_addr = location.address if location else f"좌표: {c_lat:.4f}"
             detailed_name = parse_detailed_address(full_addr)
