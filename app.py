@@ -33,7 +33,7 @@ st.markdown("""
 API_URL = "https://script.google.com/macros/s/AKfycbw4MGFNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# 🔍 [핵심 수정] 검색 대상(동네 vs 장소)에 따라 타입을 구분하는 로직
+# 검색 엔진 로직 유지 (Nominatim + Kakao 하이브리드)
 def get_location_alternative(query):
     results = []
     try:
@@ -41,29 +41,16 @@ def get_location_alternative(query):
         locations = geolocator.geocode(query, exactly_one=False, limit=5, country_codes='kr')
         if locations:
             for loc in locations:
-                # 주소에 '동', '읍', '면'이 포함되면 동네로 간주
                 is_area = any(x in query for x in ["동", "읍", "면", "리"])
-                results.append({
-                    "display_name": f"{'[동네] ' if is_area else '[지점] '} {loc.address}", 
-                    "lat": loc.latitude, 
-                    "lon": loc.longitude,
-                    "is_area": is_area
-                })
+                results.append({"display_name": f"{'[동네] ' if is_area else '[지점] '} {loc.address}", "lat": loc.latitude, "lon": loc.longitude, "is_area": is_area})
     except: pass
-    
     if not results:
         headers = {"Authorization": f"KakaoAK {KAKAO_API_KEY}"}
         try:
             res = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=3).json()
             for d in res.get('documents', []):
-                # 카카오 카테고리가 지역인 경우 동네로 간주
-                is_area = d.get('category_group_code') == 'REGION' or any(x in query for x in ["동", "읍", "면", "리"])
-                results.append({
-                    "display_name": f"{'[동네] ' if is_area else '[지점] '} {d['place_name']} ({d['address_name']})", 
-                    "lat": float(d['y']), 
-                    "lon": float(d['x']),
-                    "is_area": is_area
-                })
+                is_area = any(x in query for x in ["동", "읍", "면", "리"])
+                results.append({"display_name": f"{'[동네] ' if is_area else '[지점] '} {d['place_name']} ({d['address_name']})", "lat": float(d['y']), "lon": float(d['x']), "is_area": is_area})
         except: pass
     return results
 
@@ -101,9 +88,53 @@ with st.sidebar:
     st.write("---")
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
+    # ⭐ [추가 기능] 선점 내역 리스트 (삭제 및 수정 버튼)
+    if selected_owner != "선택":
+        st.markdown("---")
+        st.header("📍 선점 내역")
+        # 해당 점주의 데이터만 필터링 (정규식으로 정확히 점주 이름만 체크)
+        owner_data = df[df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
+        
+        if not owner_data.empty:
+            for idx, row in owner_data.iterrows():
+                # '점주명 | [타입] 장소명' 에서 장소명만 추출
+                display_name = row['owner'].split('|')[-1].strip()
+                
+                # 가로로 이름, 수정, 삭제 버튼 배치
+                col1, col2, col3 = st.columns([2.5, 1, 1])
+                with col1:
+                    if st.button(f"🏠 {display_name}", key=f"goto_{idx}", use_container_width=True):
+                        st.session_state.map_center = [row['lat'], row['lon']]
+                        st.rerun()
+                with col2:
+                    if st.button("📝", key=f"edit_btn_{idx}", help="이름 수정"):
+                        st.session_state.edit_idx = idx
+                with col3:
+                    if st.button("❌", key=f"del_btn_{idx}", help="삭제"):
+                        # 구글 시트에서 삭제 (행 번호 전송: 데이터프레임 인덱스 + 2)
+                        delete_payload = {"action": "delete", "row_index": int(idx) + 2}
+                        requests.post(API_URL, data=json.dumps(delete_payload))
+                        st.toast(f"{display_name} 삭제 중...")
+                        st.cache_data.clear(); time.sleep(1); st.rerun()
+
+            # 수정 모드 활성화 시 입력창 표시
+            if 'edit_idx' in st.session_state:
+                edit_row = df.loc[st.session_state.edit_idx]
+                st.info(f"선택한 구역: {edit_row['owner'].split('|')[-1].strip()}")
+                new_place_name = st.text_input("새로운 아파트/동네 이름 입력")
+                if st.button("이름 변경 완료"):
+                    if new_place_name:
+                        # 기존 타입([지점]/[동네]) 유지하며 이름만 교체
+                        type_prefix = "[동네] " if "[동네]" in edit_row['owner'] else "[지점] "
+                        updated_owner = f"{selected_owner} | {type_prefix}{new_place_name}"
+                        update_payload = {"action": "update", "row_index": int(st.session_state.edit_idx) + 2, "new_owner": updated_owner}
+                        requests.post(API_URL, data=json.dumps(update_payload))
+                        del st.session_state.edit_idx
+                        st.cache_data.clear(); time.sleep(1); st.rerun()
+
     st.markdown("---")
     st.header("2️⃣ 영업권 구역 선점")
-    search_addr = st.text_input("아파트명 또는 주소 입력")
+    search_addr = st.text_input("아파트명 또는 주소 입력", key="search_input_box")
     
     if st.button("🔍 위치 찾기", use_container_width=True):
         if search_addr:
@@ -122,34 +153,27 @@ with st.sidebar:
             st.session_state.map_center = [st.session_state.temp_loc['lat'], st.session_state.temp_loc['lon']]
             st.rerun()
 
-    # ⭐ [기능 수정] 동네(1km) vs 지점(100m) 가변 반경 선점 로직
     if st.session_state.temp_loc and selected_owner != "선택":
         st.write("---")
         t = st.session_state.temp_loc
         radius_m = 1000 if t['is_area'] else 100
-        
         if st.button(f"🚩 선점하기 (반경 {radius_m}m)", use_container_width=True):
             is_overlap = False
             new_pos = (t['lat'], t['lon'])
-
             for _, row in df.iterrows():
                 if row['lat'] != 0:
                     if str(row['owner']).split('|')[0].strip() == selected_owner: continue
                     dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
-                    # 기존 영업권의 반경을 데이터 이름에서 추출하여 판단
                     existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
-                    if dist < (radius_m + existing_radius) / 2: # 중심 거리 기준 중첩 체크
+                    if dist < (radius_m + existing_radius) / 2:
                         is_overlap = True; break
-            
-            if is_overlap:
-                st.error("이미 선점된 영업권과 중첩됩니다.")
+            if is_overlap: st.error("중첩되는 구역이 있습니다.")
             else:
                 prefix = "[동네] " if t['is_area'] else "[지점] "
                 clean_name = t['display_name'].split(']')[-1].strip()
                 save_val = f"{selected_owner} | {prefix}{clean_name}"
                 payload = {"action": "add", "owner": save_val, "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-                st.success(f"✅ {radius_m}m 영업권 선점 완료!")
                 st.session_state.temp_loc = None
                 st.cache_data.clear(); time.sleep(1); st.rerun()
 
@@ -157,17 +181,14 @@ with st.sidebar:
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
-# 1. 기존 데이터 표시 (저장된 타입에 맞춰 원형 그리기)
 for _, row in df.iterrows():
     if row['lat'] != 0:
         owner_name = str(row['owner']).split('|')[0].strip()
         color = "red" if owner_name == selected_owner else "blue"
-        # 타입에 따른 반경 결정
         r = 1000 if "[동네]" in str(row['owner']) else 100
         folium.Marker([row['lat'], row['lon']], popup=str(row['owner']), icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=r, color=color, fill=True, fill_opacity=0.1).add_to(m)
 
-# 2. 현재 작업 위치 (가변 반경 원 표시)
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
     r = 1000 if t['is_area'] else 100
