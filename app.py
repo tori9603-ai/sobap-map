@@ -33,7 +33,7 @@ st.markdown("""
 API_URL = "https://script.google.com/macros/s/AKfycbw4MGFNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# 검색 엔진 로직 유지 (Nominatim + Kakao 하이브리드)
+# 🔍 [핵심 수정] 검색 대상(동네 vs 장소)에 따라 타입을 구분하는 로직
 def get_location_alternative(query):
     results = []
     try:
@@ -41,7 +41,14 @@ def get_location_alternative(query):
         locations = geolocator.geocode(query, exactly_one=False, limit=5, country_codes='kr')
         if locations:
             for loc in locations:
-                results.append({"display_name": f"[추천] {loc.address}", "lat": loc.latitude, "lon": loc.longitude})
+                # 주소에 '동', '읍', '면'이 포함되면 동네로 간주
+                is_area = any(x in query for x in ["동", "읍", "면", "리"])
+                results.append({
+                    "display_name": f"{'[동네] ' if is_area else '[지점] '} {loc.address}", 
+                    "lat": loc.latitude, 
+                    "lon": loc.longitude,
+                    "is_area": is_area
+                })
     except: pass
     
     if not results:
@@ -49,7 +56,14 @@ def get_location_alternative(query):
         try:
             res = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=3).json()
             for d in res.get('documents', []):
-                results.append({"display_name": f"[{d.get('place_name')}] {d['address_name']}", "lat": float(d['y']), "lon": float(d['x'])})
+                # 카카오 카테고리가 지역인 경우 동네로 간주
+                is_area = d.get('category_group_code') == 'REGION' or any(x in query for x in ["동", "읍", "면", "리"])
+                results.append({
+                    "display_name": f"{'[동네] ' if is_area else '[지점] '} {d['place_name']} ({d['address_name']})", 
+                    "lat": float(d['y']), 
+                    "lon": float(d['x']),
+                    "is_area": is_area
+                })
         except: pass
     return results
 
@@ -66,7 +80,6 @@ def get_data_cached(api_url):
 
 df = get_data_cached(API_URL)
 
-# 세션 상태 관리
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
@@ -109,68 +122,56 @@ with st.sidebar:
             st.session_state.map_center = [st.session_state.temp_loc['lat'], st.session_state.temp_loc['lon']]
             st.rerun()
 
-    # ⭐ [기능 수정] 선점하기 버튼 및 500m 반경 체크
+    # ⭐ [기능 수정] 동네(1km) vs 지점(100m) 가변 반경 선점 로직
     if st.session_state.temp_loc and selected_owner != "선택":
         st.write("---")
         t = st.session_state.temp_loc
-        if st.button("🚩 해당 주소 선점하기 (500m)", use_container_width=True):
+        radius_m = 1000 if t['is_area'] else 100
+        
+        if st.button(f"🚩 선점하기 (반경 {radius_m}m)", use_container_width=True):
             is_overlap = False
-            # 모든 영업권을 500m 기준으로 체크
-            new_radius = 500 
             new_pos = (t['lat'], t['lon'])
 
             for _, row in df.iterrows():
                 if row['lat'] != 0:
                     if str(row['owner']).split('|')[0].strip() == selected_owner: continue
                     dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
-                    # 기존 영업권도 모두 500m 반경 보호구역으로 간주
-                    if dist < 500: 
+                    # 기존 영업권의 반경을 데이터 이름에서 추출하여 판단
+                    existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
+                    if dist < (radius_m + existing_radius) / 2: # 중심 거리 기준 중첩 체크
                         is_overlap = True; break
             
             if is_overlap:
-                st.error("이미 500m 이내에 선점된 구역이 있습니다.")
+                st.error("이미 선점된 영업권과 중첩됩니다.")
             else:
-                place_name = t['display_name'].split(']')[-1].strip()
-                save_val = f"{selected_owner} | {place_name}"
+                prefix = "[동네] " if t['is_area'] else "[지점] "
+                clean_name = t['display_name'].split(']')[-1].strip()
+                save_val = f"{selected_owner} | {prefix}{clean_name}"
                 payload = {"action": "add", "owner": save_val, "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-                st.success(f"✅ 500m 영업권 선점 완료!")
+                st.success(f"✅ {radius_m}m 영업권 선점 완료!")
                 st.session_state.temp_loc = None
                 st.cache_data.clear(); time.sleep(1); st.rerun()
 
 # --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
-
-# 지도 생성
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
-# 1. 기존 점주 데이터 표시 (500m 원형 포함)
+# 1. 기존 데이터 표시 (저장된 타입에 맞춰 원형 그리기)
 for _, row in df.iterrows():
     if row['lat'] != 0:
         owner_name = str(row['owner']).split('|')[0].strip()
         color = "red" if owner_name == selected_owner else "blue"
-        # 마커 추가
+        # 타입에 따른 반경 결정
+        r = 1000 if "[동네]" in str(row['owner']) else 100
         folium.Marker([row['lat'], row['lon']], popup=str(row['owner']), icon=folium.Icon(color=color)).add_to(m)
-        # ⭐ 500m 반경 원 추가
-        folium.Circle(
-            location=[row['lat'], row['lon']],
-            radius=500,
-            color=color,
-            fill=True,
-            fill_opacity=0.1
-        ).add_to(m)
+        folium.Circle(location=[row['lat'], row['lon']], radius=r, color=color, fill=True, fill_opacity=0.1).add_to(m)
 
-# 2. 현재 작업 중인 임시 위치 표시 (초록색 별 + 500m 점선 원)
+# 2. 현재 작업 위치 (가변 반경 원 표시)
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
+    r = 1000 if t['is_area'] else 100
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
-    # ⭐ 500m 가이드 라인 원 추가
-    folium.Circle(
-        location=[t['lat'], t['lon']],
-        radius=500,
-        color="green",
-        fill=False,
-        dash_array='5, 5'
-    ).add_to(m)
+    folium.Circle(location=[t['lat'], t['lon']], radius=r, color="green", fill=False, dash_array='5, 5').add_to(m)
 
 st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
