@@ -6,6 +6,7 @@ import requests
 import json
 import time
 from geopy.geocoders import Nominatim
+from geopy.distance import geodesic # 거리 계산을 위한 라이브러리
 
 # 1. 페이지 설정
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
@@ -41,7 +42,7 @@ def get_location_smart(query):
     except: pass
 
     try:
-        geolocator = Nominatim(user_agent=f"sobap_area_final_{int(time.time())}")
+        geolocator = Nominatim(user_agent=f"sobap_area_collision_{int(time.time())}")
         res = geolocator.geocode(f"{query}, 대한민국", exactly_one=False, timeout=10)
         if res:
             results = []
@@ -54,63 +55,38 @@ def get_location_smart(query):
 
 df = get_data()
 
-# 세션 상태 관리
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 
-# =========================================================
-# 🍱 왼쪽 사이드바: 관리 시스템
-# =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
-    
-    # 1️⃣ 점주 선택 및 등록
     st.header("1️⃣ 점주 선택")
-    with st.expander("➕ 신규 점주 등록"):
-        add_name = st.text_input("새로운 점주 성함 입력")
-        if st.button("구글 시트에 영구 등록"):
-            if add_name:
-                payload = {"action": "add", "owner": add_name, "address": "신규등록", "lat": 0, "lon": 0}
-                requests.post(API_URL, data=json.dumps(payload))
-                st.success(f"'{add_name}' 등록 완료! 새로고침 하세요.")
-                st.rerun()
-
+    
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
-    selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
+    selected_owner = st.selectbox("점주 선택", ["선택"] + unique_owners)
 
     if selected_owner != "선택":
         st.markdown("---")
-        
-        # 📍 [복구됨] 현재 선점 내역 리스트
         st.header("📍 현재 선점 내역")
-        # 해당 점주의 이름이 포함된 데이터만 필터링
         owner_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
-        
         if not owner_data.empty:
             for idx, row in owner_data.iterrows():
-                # 저장된 이름에서 장소명만 추출 (예: '이지원 | 암남동' -> '암남동')
                 place_display = str(row['owner']).split('|')[-1].strip()
                 c1, c2 = st.columns([4, 1])
                 with c1:
-                    # 장소 이름 버튼: 클릭 시 지도를 해당 위치로 이동
                     if st.button(f"🏠 {place_display}", key=f"mv_{idx}"):
                         st.session_state.map_center = [row['lat'], row['lon']]
                         st.rerun()
                 with c2:
-                    # 삭제 버튼: 클릭 시 구글 시트에서 해당 행 삭제
                     if st.button("❌", key=f"rm_{idx}"):
                         new_df = df.drop(idx)
                         requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
                         st.rerun()
-        else:
-            st.write("선점된 구역 없음")
 
         st.markdown("---")
-        
-        # 2️⃣ 새 영업권 구역 선점
         st.header("2️⃣ 영업권 구역 선점")
-        search_addr = st.text_input("동네 이름(ㅇㅇ동) 또는 아파트명")
+        search_addr = st.text_input("동네 이름 또는 아파트명")
         
         if st.button("🔍 위치 찾기"):
             results, status = get_location_smart(search_addr)
@@ -133,38 +109,59 @@ with st.sidebar:
                 st.session_state.map_center = [float(target['y']), float(target['x'])]
                 st.rerun()
 
+        # 💡 [핵심] 중복 선점 체크 로직
         if st.session_state.temp_loc:
             t = st.session_state.temp_loc
             area_tag = "[동네] " if t.get('is_area', False) else ""
+            
             if st.button("🚩 해당 주소 선점하기", use_container_width=True):
-                save_val = f"{selected_owner} | {area_tag}{t['name']}"
-                payload = {"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}
-                requests.post(API_URL, data=json.dumps(payload))
-                st.session_state.temp_loc = None
-                st.success("선점 완료!")
-                st.rerun()
+                # 1. 겹침 체크 시작
+                is_overlap = False
+                new_radius = 1000 if t.get('is_area', False) else 100
+                new_pos = (t['lat'], t['lon'])
 
-# --- 메인 화면: 실시간 지도 ---
+                for _, row in df.iterrows():
+                    if row['lat'] != 0:
+                        existing_pos = (row['lat'], row['lon'])
+                        # 기존 장소의 반경 확인
+                        existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
+                        # 두 지점 사이의 거리 계산 (미터 단위)
+                        dist = geodesic(new_pos, existing_pos).meters
+                        
+                        # 두 원의 반경 합보다 거리가 짧으면 겹치는 것으로 간주
+                        if dist < (new_radius + existing_radius):
+                            is_overlap = True
+                            overlap_owner = str(row['owner']).split('|')[0].strip()
+                            break
+                
+                if is_overlap:
+                    st.error(f"해당 아파트는 다른 점주님이 이미 선점 하였습니다")
+                else:
+                    # 겹치지 않을 때만 저장 진행
+                    save_val = f"{selected_owner} | {area_tag}{t['name']}"
+                    payload = {"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}
+                    requests.post(API_URL, data=json.dumps(payload))
+                    st.session_state.temp_loc = None
+                    st.success("선점 완료!")
+                    st.rerun()
+
+# --- 메인 화면 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
-# 등록된 데이터 지도에 표시
 for _, row in df.iterrows():
     if row['lat'] != 0:
         try:
             full_info = str(row['owner'])
             owner_name = full_info.split('|')[0].strip()
             color = "red" if owner_name == selected_owner else "blue"
-            # [동네]가 포함된 경우 1km, 일반은 100m 반경 표시
             radius_val = 1000 if "[동네]" in full_info else 100
             folium.Marker([row['lat'], row['lon']], popup=full_info, icon=folium.Icon(color=color)).add_to(m)
             folium.Circle(location=[row['lat'], row['lon']], radius=radius_val, color=color, fill=True, fill_opacity=0.15).add_to(m)
         except: continue
 
-# 현재 확인 중인 임시 위치 표시
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
-    # [동네]인 경우 1km 반경 시각화
     radius_val = 1000 if t.get('is_area', False) else 100
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=radius_val, color="green", dash_array='5, 5').add_to(m)
