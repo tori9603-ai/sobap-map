@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인 (마스터코딩 고유 디자인 유지)
+# 1. 페이지 설정 및 디자인
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -27,10 +27,10 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ [수정됨] 사장님이 새로 배포하신 구글 앱스 스크립트 URL 반영
+# ⚠️ 사장님 마스터코딩 정보 (최신 URL 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbwyveXED04ihVIn8TjJOkiLrlY4vCZVAY_g7SbGbQ5ndKPFzeYPA7kbU8h4SBiQoG9S/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사 좌표
+SONGDO_HQ = [37.385, 126.654] #
 
 # --- 🛠️ 세션 상태 초기화 (오류 방지 필수 로직) ---
 if 'df' not in st.session_state: st.session_state.df = pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
@@ -51,7 +51,6 @@ def fetch_data(api_url):
         return df
     except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 첫 로딩 시 데이터 가져오기
 if st.session_state.df.empty: st.session_state.df = fetch_data(API_URL)
 
 def simplify_name(n):
@@ -81,10 +80,9 @@ def get_location_alternative(query):
 # --- 사이드바 ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
-    if st.button("🔄 가장 최근 데이터 빠르게 가져오기", use_container_width=True):
+    if st.button("🔄 최근 데이터 가져오기", use_container_width=True):
         st.session_state.df = fetch_data(API_URL); st.rerun()
 
-    # --- 1. 점주 관리 영역 ---
     st.header("👤 점주 관리")
     with st.expander("➕ 신규 점주 등록"):
         new_name = st.text_input("새 점주 성함")
@@ -97,27 +95,12 @@ with st.sidebar:
     st.write("---")
     selected_owner = st.selectbox("1️⃣ 관리할 점주 선택", ["선택"] + unique_owners)
     
+    selected_branch = "선택" # 변수 초기화
     if selected_owner != "선택":
-        # 점주 이름 수정/삭제 버튼
         col_oe, col_od = st.columns(2)
-        if col_oe.button(f"📝 이름수정", key="btn_oe"): st.session_state.edit_owner = True
-        if col_od.button(f"❌ 점주삭제", key="btn_od"): st.session_state.delete_owner = True
-
-        if st.session_state.get('edit_owner'):
-            new_o_name = st.text_input(f"'{selected_owner}'의 새 성함")
-            if st.button("수정 완료", key="btn_oe_confirm"):
-                requests.post(API_URL, data=json.dumps({"action": "rename_owner_entirely", "old_name": selected_owner, "new_name": new_o_name}))
-                st.session_state.edit_owner = False
-                st.session_state.df = fetch_data(API_URL); st.rerun()
-
-        if st.session_state.get('delete_owner'):
-            st.error(f"'{selected_owner}'님과 관련된 모든 데이터를 삭제할까요?")
-            if st.button("네, 전체 삭제합니다", key="btn_od_confirm"):
-                requests.post(API_URL, data=json.dumps({"action": "delete_owner_entirely", "owner_name": selected_owner}))
-                st.session_state.delete_owner = False
-                st.session_state.df = fetch_data(API_URL); st.rerun()
-
-        # --- 2. 지점 관리 영역 ---
+        if col_oe.button(f"📝 이름수정"): st.session_state.edit_owner = True
+        if col_od.button(f"❌ 점주삭제"): st.session_state.delete_owner = True
+        
         st.write("---")
         owner_data_raw = st.session_state.df[st.session_state.df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         branches = sorted(list(set([val.split('|')[1].strip() for val in owner_data_raw['owner'] if len(val.split('|')) >= 2])))
@@ -125,26 +108,10 @@ with st.sidebar:
         selected_branch = st.selectbox("2️⃣ 관리할 지점 선택", ["선택"] + branches)
         
         if selected_branch != "선택":
-            # 지점 이름 수정/삭제 버튼
             col_be, col_bd = st.columns(2)
-            if col_be.button(f"📝 지점수정", key="btn_be"): st.session_state.edit_branch = True
-            if col_bd.button(f"❌ 지점삭제", key="btn_bd"): st.session_state.delete_branch = True
+            if col_be.button(f"📝 지점수정"): st.session_state.edit_branch = True
+            if col_bd.button(f"❌ 지점삭제"): st.session_state.delete_branch = True
 
-            if st.session_state.get('edit_branch'):
-                new_b_name = st.text_input(f"'{selected_branch}'의 새 이름")
-                if st.button("수정 완료", key="btn_be_confirm"):
-                    requests.post(API_URL, data=json.dumps({"action": "rename_branch_entirely", "owner_name": selected_owner, "old_branch_name": selected_branch, "new_branch_name": new_b_name}))
-                    st.session_state.edit_branch = False
-                    st.session_state.df = fetch_data(API_URL); st.rerun()
-
-            if st.session_state.get('delete_branch'):
-                st.error(f"'{selected_branch}' 지점의 모든 구역을 삭제할까요?")
-                if st.button("네, 지점 삭제합니다", key="btn_bd_confirm"):
-                    requests.post(API_URL, data=json.dumps({"action": "delete_branch_entirely", "owner_name": selected_owner, "branch_name": selected_branch}))
-                    st.session_state.delete_branch = False
-                    st.session_state.df = fetch_data(API_URL); st.rerun()
-
-            # --- 3. 구역 리스트 영역 ---
             st.write("---")
             st.markdown(f"#### 🏘️ {selected_branch} 구역 리스트")
             branch_data = owner_data_raw[owner_data_raw['owner'].str.contains(f"\|\s*{selected_branch}\s*\|", na=False)]
@@ -153,8 +120,7 @@ with st.sidebar:
                 c1, c2 = st.columns([4, 1])
                 if c1.button(f"🏠 {short_name}", key=f"go_{idx}", use_container_width=True):
                     st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
-                if c2.button("❌", key=f"del_{idx}"):
-                    st.session_state.confirm_delete_id = idx; st.rerun()
+                if c2.button("❌", key=f"del_{idx}"): st.session_state.confirm_delete_id = idx; st.rerun()
                 
                 if st.session_state.confirm_delete_id == idx:
                     st.warning("삭제할까요?")
@@ -164,18 +130,24 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("3️⃣ 영업권 신규 선점")
-    target_branch = st.text_input("등록할 지점명 (예: 송도1점)")
+    # ⭐ [벽돌 추가] 지점 선택 여부에 따른 자동화 로직
+    if selected_branch != "선택":
+        st.success(f"📍 현재 지점: **{selected_branch}**")
+        target_branch = selected_branch # 선택된 지점을 자동으로 등록용으로 사용
+    else:
+        target_branch = st.text_input("등록할 지점명 (예: 송도1점)")
+    
     search_addr = st.text_input("아파트명 또는 주소 입력", key="s_box")
     if st.button("🔍 위치 확인", use_container_width=True):
-        res = get_location_alternative(search_addr)
-        if res: st.session_state.search_results = res; st.session_state.map_center = [res[0]['lat'], res[0]['lon']]; st.rerun()
+        if search_addr:
+            res = get_location_alternative(search_addr)
+            if res: st.session_state.search_results = res; st.session_state.map_center = [res[0]['lat'], res[0]['lon']]; st.rerun()
 
     if st.session_state.search_results:
         res_opts = { r['display_name']: r for r in st.session_state.search_results }
         sel = st.selectbox("정확한 위치 선택", list(res_opts.keys()))
         if st.button("📍 별 띄우기"):
-            target = res_opts[sel]
-            st.session_state.temp_loc = target; st.session_state.map_center = [target['lat'], target['lon']]
+            target = res_opts[sel]; st.session_state.temp_loc = target; st.session_state.map_center = [target['lat'], target['lon']]
             new_r = 1000 if target['is_area'] else 100
             blocking = None
             for _, row in st.session_state.df.iterrows():
