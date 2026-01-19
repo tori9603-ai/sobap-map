@@ -29,14 +29,13 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ [수정완료] 사장님이 새로 배포하신 구글 앱스 스크립트 URL 반영
+# ⚠️ 사장님 고유 정보 및 최신 배포 URL
 API_URL = "https://script.google.com/macros/s/AKfycbzwD6llL7fipt7d-SVRXlxftJet0HV5oVQYPAQuAsCxg2i9idA6ZcEq_edzI55a2gH1/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# --- 데이터 로드 함수 (최적화) ---
+# --- 데이터 로드 함수 ---
 def fetch_data(api_url):
     try:
-        # allow_redirects=True 설정을 통해 구글 서버의 응답을 끝까지 추적합니다.
         response = requests.get(api_url, allow_redirects=True, timeout=10)
         data = response.json()
         df = pd.DataFrame(data[1:], columns=data[0])
@@ -45,12 +44,13 @@ def fetch_data(api_url):
         return df
     except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 세션 상태 초기화 (데이터 캐싱)
+# 세션 상태 초기화
 if 'df' not in st.session_state: st.session_state.df = fetch_data(API_URL)
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'prev_owner' not in st.session_state: st.session_state.prev_owner = "선택"
+if 'confirm_delete_id' not in st.session_state: st.session_state.confirm_delete_id = None
 
 # 지명 간소화 로직
 def simplify_name(full_name):
@@ -58,7 +58,7 @@ def simplify_name(full_name):
     if "," in clean: clean = clean.split(",")[0].strip()
     return clean
 
-# 검색 엔진 (Nominatim + Kakao 하이브리드)
+# 검색 엔진 (하이브리드)
 def get_location_alternative(query):
     results = []
     try:
@@ -96,11 +96,8 @@ with st.sidebar:
                 st.session_state.df = fetch_data(API_URL)
                 st.success("등록 완료!"); time.sleep(1); st.rerun()
 
-    # 등록된 점주 목록 추출
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in st.session_state.df['owner'] if name.strip() and name != 'owner'])))
     st.write("---")
-    
-    # 점주 선택 및 자동 이동
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
     if selected_owner != st.session_state.prev_owner:
@@ -118,7 +115,6 @@ with st.sidebar:
         owner_data = st.session_state.df[st.session_state.df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         
         if not owner_data.empty:
-            # 그룹형 리스트 표시 (개별지점 100m / 동네구역 1km)
             for title, pattern, icon in [("📍 개별 지점 (100m)", "^((?!\[동네\]).)*$", "🏠"), ("🏘️ 동네 구역 (1km)", "\[동네\]", "🏘️")]:
                 subset = owner_data[owner_data['owner'].str.contains(pattern, na=True)]
                 if not subset.empty:
@@ -130,10 +126,22 @@ with st.sidebar:
                             if st.button(f"{icon} {name}", key=f"go_{idx}", use_container_width=True):
                                 st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
                         with c2:
-                            # ❌ 삭제 버튼 (새 API URL로 명령 전송)
+                            # ❌ 삭제 버튼 클릭 시 상태값 설정
                             if st.button("❌", key=f"del_{idx}"):
+                                st.session_state.confirm_delete_id = idx
+                                st.rerun()
+                        
+                        # ⭐ [기능 추가] 삭제 확인 팝업 (조건부 렌더링)
+                        if st.session_state.confirm_delete_id == idx:
+                            st.warning(f"⚠️ **{name}** 구역을 정말 삭제하시겠습니까?")
+                            conf_col1, conf_col2 = st.columns(2)
+                            if conf_col1.button("확인", key=f"conf_yes_{idx}", use_container_width=True):
                                 requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
                                 st.session_state.df = fetch_data(API_URL)
+                                st.session_state.confirm_delete_id = None
+                                st.rerun()
+                            if conf_col2.button("취소", key=f"conf_no_{idx}", use_container_width=True):
+                                st.session_state.confirm_delete_id = None
                                 st.rerun()
         else: st.info("선점 내역이 없습니다.")
 
@@ -166,12 +174,7 @@ with st.sidebar:
 
 # --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
-
-
-
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
-
-# 선점된 구역 표시 (원형 반경 포함)
 for _, row in st.session_state.df.iterrows():
     if row['lat'] != 0:
         owner = str(row['owner']).split('|')[0].strip()
@@ -180,7 +183,6 @@ for _, row in st.session_state.df.iterrows():
         folium.Marker([row['lat'], row['lon']], icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=rad, color=color, fill=True, fill_opacity=0.1).add_to(m)
 
-# 검색 중인 위치 표시
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
