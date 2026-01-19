@@ -11,6 +11,21 @@ from geopy.distance import geodesic
 # 1. 페이지 설정 및 디자인 (마스터코딩 고유 디자인 유지)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
+# ==========================================
+# ✨ 로고 미리보기 설정 (사장님의 마스터코딩 외부 추가분)
+# ==========================================
+IMAGE_URL = "https://raw.githubusercontent.com/tori9603-ai/sobap-map/main/image_5.png"
+
+st.markdown(f"""
+    <head>
+        <meta property="og:title" content="소중한밥상 실시간 관제 센터">
+        <meta property="og:description" content="전국 지점 현황 및 영업권 실시간 관리 시스템">
+        <meta property="og:image" content="{IMAGE_URL}">
+        <meta property="og:type" content="website">
+    </head>
+    """, unsafe_allow_html=True)
+# ==========================================
+
 # --- 🔐 보안 접속 블록 시작 ---
 def check_password():
     """비밀번호 확인 후 통과 여부를 결정합니다."""
@@ -230,4 +245,3 @@ if check_password():
         st.session_state.temp_loc['lat'] = map_out['last_clicked']['lat']
         st.session_state.temp_loc['lon'] = map_out['last_clicked']['lng']; st.rerun()
     # --- 🏁 마스터코딩 원본 섹션 끝 ---
-
