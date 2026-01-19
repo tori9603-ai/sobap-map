@@ -11,11 +11,11 @@ from geopy.distance import geodesic
 # 1. 페이지 설정 및 성능 최적화
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
-# ⚠️ 사장님 정보
+# ⚠️ 사장님 고유 정보
 API_URL = "https://script.google.com/macros/s/AKfycbxDw8kU3K2LzcaM0zOStvwBdsZs98zyjNzQtgxJlRnZcjTCA70RUEQMLmg4lHTCb9uQ/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
 
-# 💡 [속도 업] 데이터 캐싱 기능 (60초 동안 메모리 저장)
+# 💡 데이터 캐싱 (60초 저장)
 @st.cache_data(ttl=60)
 def get_data_cached(api_url):
     try:
@@ -31,20 +31,45 @@ def get_data_cached(api_url):
     except:
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 💡 [속도 업] 주소 검색 엔진 캐싱
+# 💡 [강화] 유사 장소 리스트 검색 엔진 (주소 -> 키워드 -> 비상용)
 @st.cache_data(ttl=3600)
-def get_location_cached(query, api_key):
+def get_location_smart(query, api_key):
     headers = {"Authorization": f"KakaoAK {api_key}"}
+    all_results = []
+    
     try:
-        res = requests.get(f"https://dapi.kakao.com/v2/local/search/address.json?query={query}", headers=headers, timeout=3)
-        if res.status_code == 200 and res.json().get('documents'):
-            docs = res.json()['documents']
-            for d in docs: d['is_area'] = d.get('address_type') == 'REGION'
-            return docs, "✅ 성공"
+        # 1단계: 카카오 주소 검색 (정확한 지번/도로명)
+        res_addr = requests.get(f"https://dapi.kakao.com/v2/local/search/address.json?query={query}", headers=headers, timeout=3).json()
+        if res_addr.get('documents'):
+            for d in res_addr['documents']:
+                d['display_name'] = d['address_name']
+                d['is_area'] = d.get('address_type') == 'REGION'
+                all_results.append(d)
+        
+        # 2단계: 카카오 키워드 검색 (아파트명, 상호명 등 유사 검색 가능)
+        res_kw = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=3).json()
+        if res_kw.get('documents'):
+            for d in res_kw['documents']:
+                d['display_name'] = f"[{d['category_group_name'] or '장소'}] {d['place_name']} ({d['address_name']})"
+                d['is_area'] = False # 키워드 검색은 보통 특정 건물
+                all_results.append(d)
     except: pass
-    return [], "❓ 검색 실패"
 
-# 캐시 초기화 함수 (데이터 수정 시 호출)
+    # 3단계: 카카오 검색 실패 시 비상용 엔진 가동
+    if not all_results:
+        try:
+            geolocator = Nominatim(user_agent=f"sobap_fuzzy_{int(time.time())}")
+            res_nom = geolocator.geocode(f"{query}, 대한민국", exactly_one=False, timeout=5)
+            if res_nom:
+                for r in res_nom:
+                    all_results.append({
+                        "display_name": r.address, "y": r.latitude, "x": r.longitude,
+                        "is_area": r.raw.get('class') in ['boundary', 'place']
+                    })
+        except: pass
+        
+    return all_results
+
 def clear_cache():
     st.cache_data.clear()
 
@@ -53,20 +78,20 @@ df = get_data_cached(API_URL)
 # 세션 관리
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
+if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
     
+    # 점주 추가/수정/삭제 (기존 로직 유지)
     with st.expander("➕ 신규 점주 등록"):
         new_name = st.text_input("새 점주 성함")
         if st.button("점주 영구 등록"):
             if new_name:
-                with st.spinner("등록 중..."):
-                    requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}))
-                clear_cache() # 💡 데이터 수정 시 캐시 삭제
-                st.rerun()
+                requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}))
+                clear_cache(); st.rerun()
 
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
@@ -81,44 +106,51 @@ with st.sidebar:
 
     if selected_owner != "선택":
         st.markdown("---")
-        st.header("📍 현재 선점 내역")
+        st.header("📍 선점 내역")
         owner_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
-        if not owner_data.empty:
-            for idx, row in owner_data.iterrows():
-                place_display = str(row['owner']).split('|')[-1].strip()
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    if st.button(f"🏠 {place_display}", key=f"mv_{idx}"):
-                        st.session_state.map_center = [row['lat'], row['lon']]
-                        st.rerun()
-                with col2:
-                    if st.button("❌", key=f"rm_{idx}"):
-                        with st.spinner("삭제 중..."):
-                            new_df = df.drop(idx)
-                            requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
-                        clear_cache()
-                        st.rerun()
+        for idx, row in owner_data.iterrows():
+            place_display = str(row['owner']).split('|')[-1].strip()
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                if st.button(f"🏠 {place_display}", key=f"mv_{idx}"):
+                    st.session_state.map_center = [row['lat'], row['lon']]
+                    st.rerun()
+            with c2:
+                if st.button("❌", key=f"rm_{idx}"):
+                    new_df = df.drop(idx)
+                    requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
+                    clear_cache(); st.rerun()
 
         st.markdown("---")
+        # 💡 [사장님 요청] 주소/아파트 유사 검색 기능
         st.header("2️⃣ 영업권 구역 선점")
-        search_addr = st.text_input("동네 이름 또는 아파트명")
-        if st.button("🔍 위치 찾기"):
-            with st.spinner("검색 중..."):
-                results, status = get_location_cached(search_addr, KAKAO_API_KEY)
-            if results:
-                st.session_state.search_results = results
-                st.info(status)
-            else: st.warning(status)
+        search_addr = st.text_input("아파트명 또는 주소를 입력하세요", placeholder="예: 풀리페, 이진베이시티")
+        
+        if st.button("🔍 위치 찾기", use_container_width=True):
+            with st.spinner("가장 비슷한 장소를 찾는 중..."):
+                results = get_location_smart(search_addr, KAKAO_API_KEY)
+                if results:
+                    st.session_state.search_results = results
+                    # 💡 자동 이동: 검색 성공 시 첫 번째 결과로 지도 즉시 이동
+                    first = results[0]
+                    st.session_state.map_center = [float(first['y']), float(first['x'])]
+                    st.success(f"유사한 장소 {len(results)}개를 찾았습니다!")
+                    st.rerun()
+                else:
+                    st.error("검색 결과가 없습니다. 다른 이름으로 시도해 보세요.")
 
-        if st.session_state.get('search_results'):
-            res_options = { r['address_name']: r for r in st.session_state.search_results }
-            sel_res_addr = st.selectbox("위치 선택", list(res_options.keys()))
-            if st.button("📍 지도 확인"):
-                target = res_options[sel_res_addr]
+        if st.session_state.search_results:
+            # 💡 유사 검색 결과 리스트 제공
+            res_options = { r['display_name']: r for r in st.session_state.search_results }
+            sel_name = st.selectbox("정확한 장소를 선택하세요", list(res_options.keys()))
+            
+            if st.button("📍 선택한 위치 확인"):
+                target = res_options[sel_name]
                 st.session_state.temp_loc = {
                     "lat": float(target['y']), "lon": float(target['x']),
-                    "is_area": target.get('is_area', False), "full_addr": sel_res_addr,
-                    "name": sel_res_addr.split(' ')[-1] if not target.get('is_area', False) else sel_res_addr.split(',')[0].strip()
+                    "is_area": target.get('is_area', False),
+                    "full_addr": target.get('address_name') or sel_name,
+                    "name": target.get('place_name') or sel_name.split(' ')[-1]
                 }
                 st.session_state.map_center = [float(target['y']), float(target['x'])]
                 st.rerun()
@@ -136,14 +168,12 @@ with st.sidebar:
                 if is_overlap:
                     st.error("이미 선점된 구역과 겹칩니다!")
                 else:
-                    with st.spinner("선점 등록 중..."):
-                        save_val = f"{selected_owner} | {('[동네] ' if t.get('is_area', False) else '')}{t['name']}"
-                        requests.post(API_URL, data=json.dumps({"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}))
+                    save_val = f"{selected_owner} | {('[동네] ' if t.get('is_area', False) else '')}{t['name']}"
+                    requests.post(API_URL, data=json.dumps({"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}))
                     st.session_state.temp_loc = None
-                    clear_cache()
-                    st.rerun()
+                    clear_cache(); st.rerun()
 
-# --- 메인 화면: 지도 ---
+# --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
@@ -159,12 +189,11 @@ if st.session_state.temp_loc:
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=1000 if t.get('is_area', False) else 100, color="green", dash_array='5, 5').add_to(m)
 
-# 지도 출력
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 💡 [속도 업] 클릭 시 역지오코딩 지연 해결
+# 지도 클릭 미세 조정 (속도 유지)
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
-        st.session_state.temp_loc.update({"lat": c_lat, "lon": c_lon, "full_addr": f"좌표: {c_lat:.5f}, {c_lon:.5f}", "name": "직접 지정"})
+        st.session_state.temp_loc.update({"lat": c_lat, "lon": c_lon, "full_addr": f"직접 지정 ({c_lat:.4f})", "name": "지정 장소"})
         st.rerun()
