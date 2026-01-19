@@ -5,18 +5,20 @@ import pandas as pd
 import requests
 import json
 import time
+from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# --- 1. 초기 설정 및 디자인 ---
-st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
-
-# 카카오맵 승인 상태 변수 (승인 전: False / 승인 후: True)
-# 나중에 승인이 완료되면 이 부분만 True로 바꾸시면 됩니다.
-KAKAO_MAP_APPROVED = False 
+# 1. 페이지 설정 및 디자인 (기존 CSS 유지)
+st.set_page_config(
+    page_title="소중한밥상 통합 관제 시스템", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.markdown("""
     <style>
         [data-testid="stSidebar"] { background-color: #FFF0F0; }
+        [data-testid="stSidebarCollapsedControl"] svg { display: none !important; }
         [data-testid="stSidebarCollapsedControl"] {
             background-color: #FF4B4B !important; color: white !important;
             border-radius: 0 15px 15px 0 !important; width: 160px !important; height: 65px !important;
@@ -26,15 +28,14 @@ st.markdown("""
         }
         [data-testid="stSidebarCollapsedControl"]::after {
             content: "🆑 클릭해서 메뉴열기" !important;
-            font-weight: 900 !important; color: white !important; font-size: 17px !important;
+            font-weight: 900 !important; color: white !important; font-size: 17px !important; white-space: nowrap !important;
         }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 고유 정보 및 데이터 로드 ---
+# ⚠️ 사장님 고유 정보 반영 (REST API 키는 승인과 별개로 검색 기능을 수행합니다)
 API_URL = "https://script.google.com/macros/s/AKfycbw4MGFNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
-KAKAO_REST_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-KAKAO_JS_KEY = "919179e81cdd52922456fbef112f964a"
+KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
 @st.cache_data(ttl=5)
 def get_data_cached(api_url):
@@ -43,35 +44,54 @@ def get_data_cached(api_url):
         data = response.json()
         if len(data) > 1:
             df = pd.DataFrame(data[1:], columns=data[0])
+            df['owner'] = df['owner'].astype(str).str.strip()
             df['lat'] = pd.to_numeric(df['lat'], errors='coerce').fillna(0)
             df['lon'] = pd.to_numeric(df['lon'], errors='coerce').fillna(0)
-            return df
+            return df[~df['owner'].isin(['0', '', 'nan'])]
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
-    except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
+    except:
+        return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
+# 카카오 로컬 검색 엔진 (REST API 사용)
+@st.cache_data(ttl=3600)
 def get_location_smart(query, api_key):
     headers = {"Authorization": f"KakaoAK {api_key}"}
-    results = []
+    all_results = []
     try:
-        # 주소 검색
-        res = requests.get(f"https://dapi.kakao.com/v2/local/search/address.json?query={query}", headers=headers).json()
-        for d in res.get('documents', []):
-            results.append({"display_name": f"[주소] {d['address_name']}", "lat": float(d['y']), "lon": float(d['x']), "is_area": d.get('address_type') == 'REGION'})
-        # 키워드(아파트 등) 검색
+        # 1. 주소 검색
+        res_addr = requests.get(f"https://dapi.kakao.com/v2/local/search/address.json?query={query}", headers=headers).json()
+        if res_addr.get('documents'):
+            for d in res_addr['documents']:
+                d['display_name'] = f"[주소] {d['address_name']}"
+                d['is_area'] = d.get('address_type') == 'REGION'
+                all_results.append(d)
+        # 2. 키워드 검색
         res_kw = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers).json()
-        for d in res_kw.get('documents', []):
-            results.append({"display_name": f"[{d.get('category_group_name', '장소')}] {d['place_name']}", "lat": float(d['y']), "lon": float(d['x']), "is_area": False})
+        if res_kw.get('documents'):
+            for d in res_kw['documents']:
+                d['display_name'] = f"[{d.get('category_group_name', '장소')}] {d['place_name']} ({d['address_name']})"
+                d['is_area'] = False
+                all_results.append(d)
     except: pass
-    return results
+    return all_results
+
+def parse_detailed_address(address_str):
+    if not address_str or address_str == "대한민국": return "지정 위치"
+    parts = [p.strip() for p in address_str.split(',')]
+    filtered_parts = [p for p in parts if p != "대한민국"]
+    return filtered_parts[0] if filtered_parts else "지정 위치"
+
+def clear_cache():
+    st.cache_data.clear()
 
 df = get_data_cached(API_URL)
 
-# 세션 상태 관리
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
-if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
+if 'search_results' not in st.session_state: st.session_state.search_results = []
+if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
-# --- 3. 사이드바 UI ---
+# --- 사이드바 ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
@@ -81,60 +101,109 @@ with st.sidebar:
         if st.button("점주 영구 등록", use_container_width=True):
             if new_name:
                 payload = {"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}
-                requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-                st.success("등록 완료!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                headers = {'Content-Type': 'application/json'}
+                try:
+                    res = requests.post(API_URL, data=json.dumps(payload), headers=headers, allow_redirects=True, timeout=15)
+                    if res.status_code == 200:
+                        st.success(f"✅ {new_name} 점주 등록 완료!")
+                        clear_cache(); time.sleep(2); st.rerun()
+                    else: st.error("서버 응답 실패")
+                except Exception as e: st.error(f"연결 오류: {e}")
+            else: st.warning("성함을 입력해주세요.")
 
-    st.markdown("---")
-    st.header("2️⃣ 영업권 구역 선점")
-    search_addr = st.text_input("아파트명 또는 주소 입력")
+    unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
+    selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    if st.button("🔍 위치 찾기", use_container_width=True):
-        res = get_location_smart(search_addr, KAKAO_REST_KEY)
-        if res:
-            st.session_state.search_results = res
-            st.session_state.map_center = [res[0]['lat'], res[0]['lon']]
-            st.rerun()
-        else: st.error("결과가 없습니다.")
+    if selected_owner != st.session_state.prev_selected_owner:
+        st.session_state.prev_selected_owner = selected_owner
+        if selected_owner != "선택":
+            target_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
+            if not target_data.empty:
+                st.session_state.map_center = [target_data.iloc[0]['lat'], target_data.iloc[0]['lon']]
+                st.rerun()
 
-    if st.session_state.search_results:
-        res_options = { r['display_name']: r for r in st.session_state.search_results }
-        sel = st.selectbox("정확한 위치 선택", list(res_options.keys()))
-        if st.button("📍 위치 확인"):
-            st.session_state.temp_loc = res_options[sel]
-            st.session_state.map_center = [st.session_state.temp_loc['lat'], st.session_state.temp_loc['lon']]
-            st.rerun()
+    if selected_owner != "선택":
+        st.markdown("---")
+        st.header("📍 선점 내역")
+        owner_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
+        for idx, row in owner_data.iterrows():
+            place_display = str(row['owner']).split('|')[-1].strip()
+            if st.button(f"🏠 {place_display}", key=f"mv_{idx}", use_container_width=True):
+                st.session_state.map_center = [row['lat'], row['lon']]
+                st.rerun()
 
-# --- 4. 메인 지도 영역 ---
+        st.markdown("---")
+        st.header("2️⃣ 영업권 구역 선점")
+        search_addr = st.text_input("아파트명 또는 주소 입력", key="search_input")
+        
+        if st.button("🔍 위치 찾기", use_container_width=True):
+            if search_addr:
+                results = get_location_smart(search_addr, KAKAO_API_KEY)
+                if results:
+                    st.session_state.search_results = results
+                    first = results[0]
+                    st.session_state.map_center = [float(first['y']), float(first['x'])]
+                    st.rerun()
+                else:
+                    st.session_state.search_results = []
+                    st.error("검색 결과가 없습니다.")
+
+        if st.session_state.get('search_results'):
+            res_options = { r['display_name']: r for r in st.session_state.search_results }
+            sel_name = st.selectbox("정확한 위치를 선택하세요", list(res_options.keys()), key="select_search_res")
+            
+            if st.button("📍 선택한 위치로 지도 이동", use_container_width=True):
+                target = res_options[sel_name]
+                st.session_state.temp_loc = {
+                    "lat": float(target['y']), "lon": float(target['x']),
+                    "is_area": target.get('is_area', False),
+                    "full_addr": target.get('address_name') or sel_name,
+                    "name": parse_detailed_address(sel_name)
+                }
+                st.session_state.map_center = [float(target['y']), float(target['x'])]
+                st.rerun()
+
+        if st.session_state.temp_loc:
+            t = st.session_state.temp_loc
+            st.warning(f"🚩 선택된 위치: {t['name']}")
+            if st.button("✅ 이 구역 최종 선점하기", use_container_width=True):
+                is_overlap = False
+                new_radius = 1000 if t.get('is_area', False) else 100
+                new_pos = (t['lat'], t['lon'])
+
+                for _, row in df.iterrows():
+                    if row['lat'] != 0:
+                        if str(row['owner']).split('|')[0].strip() == selected_owner: continue
+                        dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
+                        existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
+                        if dist < (new_radius + existing_radius):
+                            is_overlap = True; break
+                
+                if is_overlap: st.error("이미 선점된 지역입니다.")
+                else:
+                    save_val = f"{selected_owner} | {('[동네] ' if t.get('is_area', False) else '')}{t['name']}"
+                    payload = {"action": "add", "owner": save_val, "address": t['full_addr'], "lat": t['lat'], "lon": t['lon']}
+                    requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'}, allow_redirects=True)
+                    st.session_state.temp_loc = None
+                    clear_cache(); st.rerun()
+
+# --- 메인 화면: Folium 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 
+# Folium은 카카오 SDK 승인 없이도 즉시 운영 가능합니다.
+m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
+for _, row in df.iterrows():
+    if row['lat'] != 0:
+        owner_name = str(row['owner']).split('|')[0].strip()
+        color = "red" if owner_name == selected_owner else "blue"
+        folium.Marker([row['lat'], row['lon']], popup=str(row['owner']), icon=folium.Icon(color=color)).add_to(m)
+        folium.Circle(location=[row['lat'], row['lon']], radius=1000 if "[동네]" in str(row['owner']) else 100, color=color, fill=True, fill_opacity=0.15).add_to(m)
 
-if KAKAO_MAP_APPROVED:
-    # --- 승인 후: 카카오맵 SDK 버전 ---
-    kakao_html = f"""
-    <div id="map" style="width:100%;height:800px;"></div>
-    <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}"></script>
-    <script>
-        var map = new kakao.maps.Map(document.getElementById('map'), {{
-            center: new kakao.maps.LatLng({st.session_state.map_center[0]}, {st.session_state.map_center[1]}),
-            level: 3
-        }});
-    </script>
-    """
-    st.components.v1.html(kakao_html, height=800)
-else:
-    # --- 승인 전: Folium 버전 ---
-    m = folium.Map(location=st.session_state.map_center, zoom_start=16)
-    
-    # 기존 점주 표시
-    for _, row in df.iterrows():
-        if row['lat'] != 0:
-            folium.Marker([row['lat'], row['lon']], popup=str(row['owner']), icon=folium.Icon(color="blue")).add_to(m)
-            folium.Circle([row['lat'], row['lon']], radius=100, color="blue", fill=True, fill_opacity=0.1).add_to(m)
-    
-    # 검색 위치 표시
-    if st.session_state.temp_loc:
-        t = st.session_state.temp_loc
-        folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
-        
-    st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
+if st.session_state.temp_loc:
+    t = st.session_state.temp_loc
+    folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
+    folium.Circle(location=[t['lat'], t['lon']], radius=1000 if t.get('is_area', False) else 100, color="green", dash_array='5, 5').add_to(m)
+
+# 지도 렌더링
+st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center[0]}_{st.session_state.map_center[1]}")
