@@ -29,11 +29,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ 사장님 고유 정보 (기존 정보 유지)
+# ⚠️ 사장님 고유 정보 유지
 API_URL = "https://script.google.com/macros/s/AKfycbw4MGFNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# 검색 엔진 (Nominatim + Kakao 하이브리드 유지)
+# 검색 엔진 로직 유지
 def get_location_alternative(query):
     results = []
     try:
@@ -85,22 +85,13 @@ with st.sidebar:
                 requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
                 st.success("등록 완료!"); st.cache_data.clear(); time.sleep(1); st.rerun()
 
-    # ⭐ [추가 기능] 현재 등록된 점주 리스트 표시
-    st.write("---")
-    st.subheader("👥 현재 등록된 점주 리스트")
+    # ⭐ [수정] 점주 리스트 표시 삭제 및 데이터 준비
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip() and name != 'owner'])))
-    
-    if unique_owners:
-        # 리스트 형태로 깔끔하게 표시
-        for owner in unique_owners:
-            st.write(f"• **{owner}**")
-    else:
-        st.write("등록된 점주가 없습니다.")
 
     st.write("---")
+    # 등록된 리스트 없이 바로 선택창 노출
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    # 점주 선택 시 지도 이동 로직 유지
     if selected_owner != "선택":
         target_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
         if not target_data.empty:
