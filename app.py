@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 및 기본 설정
+# 1. 페이지 설정
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
 # ⚠️ 사장님 고유 정보
@@ -51,19 +51,16 @@ def get_location_smart(query):
 
 df = get_data()
 
-# 세션 상태 관리 (초기 설정)
+# 세션 상태 관리
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
 if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
-# =========================================================
-# 🍱 왼쪽 사이드바: 점주 및 영업권 통합 관리
-# =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
-    
     st.header("👤 점주 관리")
+    
     with st.expander("➕ 신규 점주 등록"):
         new_name = st.text_input("새 점주 성함")
         if st.button("점주 영구 등록"):
@@ -74,33 +71,16 @@ with st.sidebar:
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    # 💡 [사장님 요청] 점주 변경 시 자동 지도 이동 로직
+    # 점주 변경 시 자동 지도 이동 로직
     if selected_owner != st.session_state.prev_selected_owner:
-        st.session_state.prev_selected_owner = selected_owner # 변경된 점주 저장
+        st.session_state.prev_selected_owner = selected_owner
         if selected_owner != "선택":
-            # 해당 점주의 데이터 중 좌표가 있는 첫 번째 데이터 찾기
             target_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
             if not target_data.empty:
-                # 첫 번째 선점 구역으로 지도 중심 변경
                 st.session_state.map_center = [target_data.iloc[0]['lat'], target_data.iloc[0]['lon']]
-                st.rerun() # 지도 갱신을 위해 즉시 재실행
-
-    if selected_owner != "선택":
-        c1, c2 = st.columns(2)
-        with c1:
-            with st.popover("📝 이름 수정"):
-                edit_name = st.text_input("변경할 성함", value=selected_owner)
-                if st.button("이름 일괄 변경"):
-                    new_df = df.copy()
-                    new_df['owner'] = new_df['owner'].apply(lambda x: x.replace(selected_owner, edit_name) if x.startswith(selected_owner) else x)
-                    requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
-                    st.rerun()
-        with c2:
-            if st.button("🗑️ 점주 삭제", type="primary"):
-                new_df = df[~df['owner'].str.contains(selected_owner, na=False)]
-                requests.post(API_URL, data=json.dumps({"action": "sync", "data": [new_df.columns.tolist()] + new_df.values.tolist()}))
                 st.rerun()
 
+    if selected_owner != "선택":
         st.markdown("---")
         st.header("📍 현재 선점 내역")
         owner_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
@@ -120,7 +100,7 @@ with st.sidebar:
 
         st.markdown("---")
         st.header("2️⃣ 영업권 구역 선점")
-        st.info("💡 팁: 지도 확인 후 지도를 직접 클릭하면 위치를 미세 조정할 수 있습니다.")
+        st.info("💡 팁: 지도를 클릭하면 핀 위치와 주소가 자동으로 업데이트됩니다.")
         search_addr = st.text_input("동네 이름 또는 아파트명")
         if st.button("🔍 위치 찾기"):
             results, status = get_location_smart(search_addr)
@@ -145,6 +125,8 @@ with st.sidebar:
         if st.session_state.temp_loc:
             t = st.session_state.temp_loc
             area_tag = "[동네] " if t.get('is_area', False) else ""
+            st.warning(f"🏠 선택된 주소: {t['full_addr']}") # 💡 사용자 확인용
+            
             if st.button("🚩 해당 주소 선점하기", use_container_width=True):
                 is_overlap = False
                 new_radius = 1000 if t.get('is_area', False) else 100
@@ -181,7 +163,31 @@ if st.session_state.temp_loc:
 
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
 
+# 💡 [핵심] 지도 클릭 시 역지오코딩 로직
 if map_data.get("last_clicked") and st.session_state.temp_loc:
-    st.session_state.temp_loc["lat"] = map_data["last_clicked"]["lat"]
-    st.session_state.temp_loc["lon"] = map_data["last_clicked"]["lng"]
+    clicked_lat = map_data["last_clicked"]["lat"]
+    clicked_lon = map_data["last_clicked"]["lng"]
+    
+    # 지점의 실제 주소 찾아오기 (역지오코딩)
+    try:
+        geolocator = Nominatim(user_agent=f"sobap_reverse_{int(time.time())}")
+        location = geolocator.reverse((clicked_lat, clicked_lon), language='ko')
+        if location:
+            new_addr = location.address
+            # 주소에서 핵심 명칭(동네 또는 건물명) 추출
+            addr_parts = [p.strip() for p in new_addr.split(',')]
+            # 보통 한국 주소의 경우 뒷부분이 더 큰 단위이므로 앞부분의 구체적 명칭 사용
+            display_name = addr_parts[0] if len(addr_parts) > 0 else "지정 위치"
+        else:
+            new_addr = "직접 지정 주소"
+            display_name = "지정 위치"
+    except:
+        new_addr = "주소 변환 실패"
+        display_name = "지정 위치"
+
+    # 세션 상태 업데이트
+    st.session_state.temp_loc["lat"] = clicked_lat
+    st.session_state.temp_loc["lon"] = clicked_lon
+    st.session_state.temp_loc["full_addr"] = new_addr
+    st.session_state.temp_loc["name"] = display_name
     st.rerun()
