@@ -33,8 +33,8 @@ st.markdown("""
 API_URL = "https://script.google.com/macros/s/AKfycbzwD6llL7fipt7d-SVRXlxftJet0HV5oVQYPAQuAsCxg2i9idA6ZcEq_edzI55a2gH1/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# ⭐ [추가] 소중한밥상 본사(인천 송도) 좌표
-SONGDO_HQ = [37.385, 126.654] #
+# ⭐ 소중한밥상 본사(인천 송도) 좌표
+SONGDO_HQ = [37.385, 126.654]
 
 def fetch_data(api_url):
     try:
@@ -47,7 +47,7 @@ def fetch_data(api_url):
         return df
     except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 세션 상태 초기화 (기본 위치를 송도 본사로 설정)
+# 세션 상태 초기화
 if 'df' not in st.session_state: st.session_state.df = fetch_data(API_URL)
 if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -83,7 +83,9 @@ def get_location_alternative(query):
 # --- 사이드바 ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
-    if st.button("🔄 전체 데이터 새로고침", use_container_width=True):
+    
+    # ⭐ 사장님 요청으로 버튼 이름 변경
+    if st.button("🔄 가장 최근 데이터 빠르게 가져오기", use_container_width=True):
         st.session_state.df = fetch_data(API_URL); st.rerun()
 
     st.header("👤 점주 관리")
@@ -93,7 +95,6 @@ with st.sidebar:
             if new_name:
                 requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}))
                 st.session_state.df = fetch_data(API_URL)
-                # ⭐ 신규 등록 시 지도를 송도 본사로 이동
                 st.session_state.map_center = SONGDO_HQ
                 st.success("등록 완료!"); time.sleep(1); st.rerun()
 
@@ -108,9 +109,7 @@ with st.sidebar:
             if not valid_coords.empty:
                 st.session_state.map_center = [valid_coords.iloc[0]['lat'], valid_coords.iloc[0]['lon']]
             else:
-                # ⭐ 선점 내역이 없는 점주 선택 시 송도 본사로 이동
                 st.session_state.map_center = SONGDO_HQ
-        
         st.session_state.prev_owner = selected_owner; st.rerun()
 
     if selected_owner != "선택":
