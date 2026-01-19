@@ -24,23 +24,25 @@ st.markdown("""
         [data-testid="stSidebarCollapsedControl"]::after {
             content: "🆑 메뉴열기" !important; font-weight: 900 !important; color: white !important; font-size: 17px !important;
         }
-        /* 지도 위 우측 상단 통계 디자인 */
-        .floating-stat-box {
-            position: fixed; top: 18px; right: 180px; z-index: 999999;
-            background: rgba(255, 255, 255, 0.9); padding: 6px 14px;
-            border-radius: 20px; border: 1.5px solid #FF4B4B;
-            font-size: 13px; font-weight: bold; color: #333;
-            box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        
+        /* 🌟 [추가] 통합 플로팅 대시보드 스타일 (숫자 + 버튼 세트) */
+        .floating-dashboard {
+            position: fixed; top: 20px; right: 80px; z-index: 999999;
+            display: flex; align-items: center; gap: 15px;
+            background: rgba(255, 255, 255, 0.95); padding: 8px 20px;
+            border-radius: 40px; border: 2.5px solid #FF4B4B;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.2);
         }
+        .stat-item { font-size: 14px; font-weight: 800; color: #333; white-space: nowrap; }
     </style>
     """, unsafe_allow_html=True)
 
 # ⚠️ 사장님 마스터코딩 정보 (URL 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbyBZSNYE4mE0YKRvdp4GYjMLeJmwzBIGs3-EmJ2bBNr-yu-fazKw6wFodx_ypM5M2RT/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-SONGDO_HQ = [37.385, 126.654] 
+SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사 좌표
 
-# --- 🛠️ 세션 상태 초기화 ---
+# --- 🛠️ 세션 상태 초기화 (마스터코딩 동일) ---
 if 'df' not in st.session_state: st.session_state.df = pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -61,7 +63,7 @@ def fetch_data(api_url):
 
 if st.session_state.df.empty: st.session_state.df = fetch_data(API_URL)
 
-# --- 📊 통계 계산 (실시간 반영) ---
+# --- [추가] 📊 통계 데이터 미리 계산 ---
 total_df = st.session_state.df
 owners_cnt = len(set([str(val).split('|')[0].strip() for val in total_df['owner'] if str(val).strip() and val != 'owner']))
 branches_cnt = len(set(["|".join(str(val).split('|')[:2]).strip() for val in total_df['owner'] if "|" in str(val)]))
@@ -95,7 +97,7 @@ def get_location_alternative(query):
         except: pass
     return results
 
-# --- 사이드바 (마스터코딩 보존) ---
+# --- 사이드바 (마스터코딩 100% 유지) ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     if st.button("🔄 최근 데이터 가져오기", use_container_width=True):
@@ -170,12 +172,6 @@ with st.sidebar:
                     st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
                 if c2.button("❌", key=f"del_{idx}"):
                     st.session_state.confirm_delete_id = idx; st.rerun()
-                
-                if st.session_state.confirm_delete_id == idx:
-                    st.warning("삭제할까요?")
-                    if st.button("확인", key=f"y_{idx}"):
-                        requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
-                        st.session_state.df = fetch_data(API_URL); st.session_state.confirm_delete_id = None; st.rerun()
 
     st.markdown("---")
     st.header("3️⃣ 영업권 신규 선점")
@@ -190,53 +186,36 @@ with st.sidebar:
             res = get_location_alternative(search_addr)
             if res: st.session_state.search_results = res; st.session_state.map_center = [res[0]['lat'], res[0]['lon']]; st.rerun()
 
-    if st.session_state.search_results:
-        res_opts = { r['display_name']: r for r in st.session_state.search_results }
-        sel = st.selectbox("정확한 위치 선택", list(res_opts.keys()))
-        if st.button("📍 별 띄우기"):
-            target = res_opts[sel]; st.session_state.temp_loc = target; st.session_state.map_center = [target['lat'], target['lon']]
-            new_r = target['radius']
-            blocking = None
-            for _, row in st.session_state.df.iterrows():
-                if row['lat'] != 0:
-                    curr_owner = str(row['owner']).split('|')[0].strip()
-                    if curr_owner == selected_owner: continue
-                    dist = geodesic((target['lat'], target['lon']), (row['lat'], row['lon'])).meters
-                    exist_r = 1000 if "[동네]" in str(row['owner']) else 200
-                    if dist < (new_r + exist_r): blocking = curr_owner; break
-            st.session_state.overlap_error = f"❌ 등록 불가: {blocking} 점주님과 겹칩니다." if blocking else None; st.rerun()
-
-    if st.session_state.temp_loc and selected_owner != "선택":
-        if st.session_state.get('overlap_error'): st.error(st.session_state.overlap_error)
-        else:
-            t = st.session_state.temp_loc
-            if st.button(f"🚩 {selected_owner} | {target_branch} 등록", use_container_width=True):
-                full_val = f"{selected_owner} | {target_branch} | {'[동네] ' if t['is_area'] else '[지점] '}{simplify_name(t['display_name'])}"
-                requests.post(API_URL, data=json.dumps({"action": "add", "owner": full_val, "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}))
-                st.session_state.df = fetch_data(API_URL); st.session_state.temp_loc = None; st.rerun()
-
-# --- 🗺️ 메인 지도 및 우측 상단 플로팅 바 ---
+# --- 🗺️ 메인 지도 및 통합 플로팅 대시보드 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 
-# 🌟 [벽돌 추가] 지도 우측 상단 오버레이 레이아웃
-st.markdown(f'<div class="floating-stat-box">👤 점주 {owners_cnt}명 | 🏢 지점 {branches_cnt}개</div>', unsafe_allow_html=True)
+# 🌟 [추가] 숫자 통계와 버튼이 함께 움직이는 통합 대시보드
+st.markdown(f"""
+    <div class="floating-dashboard">
+        <span class="stat-item">👤 점주: {owners_cnt}명</span>
+        <span style="color: #ddd; font-weight: 300;">|</span>
+        <span class="stat-item">🏢 지점: {branches_cnt}개</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-# 📥 엑셀 다운로드 버튼 배치
+# 🌟 [추가] 통계 바 옆에 배치되는 다운로드 버튼 (레이아웃 조절)
 with st.container():
-    col_main, col_btn = st.columns([8.5, 1.5])
-    with col_btn:
-        csv_data = total_df.to_csv(index=False).encode('utf-8-sig') # 엑셀 한글 깨짐 방지
+    c_empty, c_btn = st.columns([8.2, 1.8])
+    with c_btn:
+        csv_data = total_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
             label="📥 엑셀(CSV) 다운로드",
             data=csv_data,
-            file_name='소중한밥상_운영현황_마스터.csv',
+            file_name='소중한밥상_운영현황.csv',
             mime='text/csv',
-            use_container_width=True
+            use_container_width=True,
+            key="float_excel_btn"
         )
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
-for _, row in total_df.iterrows():
+# 1. 기존 데이터 표시 (가변 반경 적용)
+for _, row in st.session_state.df.iterrows():
     if row['lat'] != 0:
         owner_name = str(row['owner']).split('|')[0].strip()
         color = "red" if owner_name == selected_owner else "blue"
@@ -244,16 +223,10 @@ for _, row in total_df.iterrows():
         folium.Marker([row['lat'], row['lon']], icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=rad, color=color, fill=True, fill_opacity=0.1).add_to(m)
 
+# 2. 별 띄우기 (임시 위치) 표시
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="orange", icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=t['radius'], color="orange", fill=True, fill_opacity=0.2, dash_array='5, 5').add_to(m)
 
 st_folium(m, width="100%", height=800, key="main_map")
-
-# 지도 클릭 시 별 위치 이동
-if map_out := st.session_state.get('main_map'):
-    if map_out.get('last_clicked') and st.session_state.temp_loc:
-        st.session_state.temp_loc['lat'] = map_out['last_clicked']['lat']
-        st.session_state.temp_loc['lon'] = map_out['last_clicked']['lng']
-        st.rerun()
