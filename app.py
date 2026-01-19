@@ -11,7 +11,7 @@ from geopy.distance import geodesic
 # 1. 페이지 설정 및 성능 최적화
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
-# 💡 [UI 개선] 사이드바 배경색 및 모바일 열기 버튼 스타일 강화
+# 💡 [핵심 추가] 사이드바 열기 버튼을 무조건 크게 만드는 CSS
 st.markdown("""
     <style>
         /* 1. 사이드바 배경색 (연한 빨강) */
@@ -19,35 +19,37 @@ st.markdown("""
             background-color: #FFF0F0;
         }
         
-        /* 2. 모바일/PC 사이드바 열기 버튼 (직관성 강화) */
+        /* 2. 모바일/웹 사이드바 열기 버튼 스타일 (최강의 직관성) */
         [data-testid="stSidebarCollapsedControl"] {
-            background-color: #FF4B4B !important; /* 진한 빨강 포인트 */
+            background-color: #FF4B4B !important; /* 진한 빨강 */
             color: white !important;
-            border-radius: 0 10px 10px 0 !important;
-            padding: 10px 15px !important;
-            width: auto !important;
-            height: 50px !important;
+            border-radius: 0 15px 15px 0 !important;
+            padding: 12px 20px !important;
+            width: 140px !important; /* 버튼 가로 길이 대폭 확대 */
+            height: 60px !important; /* 버튼 세로 높이 대폭 확대 */
             display: flex !important;
             align-items: center !important;
+            justify-content: center !important;
             left: 0 !important;
             top: 20px !important;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+            box-shadow: 4px 4px 10px rgba(0,0,0,0.3) !important;
+            z-index: 999999 !important;
         }
         
-        /* 버튼 내부 아이콘 색상 변경 */
+        /* 버튼 내부 아이콘(화살표) 크기 및 색상 */
         [data-testid="stSidebarCollapsedControl"] svg {
             fill: white !important;
-            width: 25px !important;
-            height: 25px !important;
+            width: 30px !important;
+            height: 30px !important;
         }
         
-        /* 버튼 옆에 "메뉴 열기" 문구 추가 */
+        /* 버튼 옆에 "관리 메뉴" 문구 강제 삽입 */
         [data-testid="stSidebarCollapsedControl"]::after {
-            content: " 🚩 메뉴 열기";
-            font-weight: bold !important;
+            content: " 🚩 메뉴열기";
+            font-weight: 900 !important;
             color: white !important;
-            font-size: 16px !important;
-            margin-left: 5px !important;
+            font-size: 18px !important;
+            margin-left: 8px !important;
             white-space: nowrap;
         }
     </style>
@@ -57,7 +59,7 @@ st.markdown("""
 API_URL = "https://script.google.com/macros/s/AKfycbxDw8kU3K2LzcaM0zOStvwBdsZs98zyjNzQtgxJlRnZcjTCA70RUEQMLmg4lHTCb9uQ/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
 
-# 데이터 캐싱 (60초 저장)
+# 데이터 캐싱 (60초 저장 - 터보 모드)
 @st.cache_data(ttl=60)
 def get_data_cached(api_url):
     try:
@@ -81,7 +83,7 @@ def parse_detailed_address(address_str):
     filtered_parts = [p for p in parts if p != "대한민국"]
     return filtered_parts[0] if filtered_parts else "지정 위치"
 
-# 유사 장소 검색 엔진 (캐싱 적용)
+# 유사 장소 검색 엔진 (주소/키워드 통합)
 @st.cache_data(ttl=3600)
 def get_location_smart(query, api_key):
     headers = {"Authorization": f"KakaoAK {api_key}"}
@@ -113,7 +115,9 @@ if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
-# --- 사이드바 관리 메뉴 ---
+# =========================================================
+# 🍱 왼쪽 사이드바 (연한 빨강 배경)
+# =========================================================
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
@@ -128,7 +132,7 @@ with st.sidebar:
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip()])))
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     
-    # 점주 변경 시 자동 지도 이동
+    # 점주 변경 시 해당 구역으로 지도 자동 이동
     if selected_owner != st.session_state.prev_selected_owner:
         st.session_state.prev_selected_owner = selected_owner
         if selected_owner != "선택":
@@ -191,6 +195,7 @@ with st.sidebar:
                 for _, row in df.iterrows():
                     if row['lat'] != 0:
                         row_owner_only = str(row['owner']).split('|')[0].strip()
+                        # 본인 중복은 허용
                         if row_owner_only == selected_owner: continue
                         dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
                         existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
@@ -205,7 +210,7 @@ with st.sidebar:
                     st.session_state.temp_loc = None
                     clear_cache(); st.rerun()
 
-# --- 메인 화면: 지도 ---
+# --- 메인 화면: 실시간 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
@@ -223,12 +228,12 @@ if st.session_state.temp_loc:
 
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 지도 클릭 시 미세 조정 및 상세 지명 자동 추출
+# 지도 클릭 미세 조정 및 상세 주소 추출 (속도 유지)
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
         try:
-            geolocator = Nominatim(user_agent=f"sobap_final_ui_{int(time.time())}")
+            geolocator = Nominatim(user_agent=f"sobap_final_ui_v2_{int(time.time())}")
             location = geolocator.reverse((c_lat, c_lon), language='ko')
             full_addr = location.address if location else f"좌표: {c_lat:.4f}"
             detailed_name = parse_detailed_address(full_addr)
