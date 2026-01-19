@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인 (사장님 디자인 완벽 유지)
+# 1. 페이지 설정 및 디자인 (사장님 디자인 절대 유지)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -31,39 +31,26 @@ st.markdown("""
 
 # ⚠️ 사장님 고유 정보 (기존 정보 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbw4MGFNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
-KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" #
+KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 
-# 🔍 [핵심 수정] 카카오 심사 대기 중에도 작동하는 듀얼 검색 엔진
+# 검색 엔진 (Nominatim + Kakao 하이브리드 유지)
 def get_location_alternative(query):
     results = []
-    
-    # 방법 1: Nominatim (오픈소스) - 승인 필요 없음
     try:
         geolocator = Nominatim(user_agent="sojunghan_bapsang_manager")
-        # 한국 지역으로 검색 범위 제한 강화
         locations = geolocator.geocode(query, exactly_one=False, limit=5, country_codes='kr')
         if locations:
             for loc in locations:
-                results.append({
-                    "display_name": f"[추천] {loc.address}",
-                    "lat": loc.latitude,
-                    "lon": loc.longitude,
-                    "is_area": "동" in query or "면" in query or "리" in query
-                })
+                results.append({"display_name": f"[추천] {loc.address}", "lat": loc.latitude, "lon": loc.longitude})
     except: pass
     
-    # 방법 2: 카카오 API (승인 완료 시 자동 작동)
     if not results:
         headers = {"Authorization": f"KakaoAK {KAKAO_API_KEY}"}
         try:
             res = requests.get(f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}", headers=headers, timeout=3).json()
             for d in res.get('documents', []):
-                results.append({
-                    "display_name": f"[{d.get('place_name')}] {d['address_name']}",
-                    "lat": float(d['y']), "lon": float(d['x']), "is_area": False
-                })
+                results.append({"display_name": f"[{d.get('place_name')}] {d['address_name']}", "lat": float(d['y']), "lon": float(d['x'])})
         except: pass
-        
     return results
 
 @st.cache_data(ttl=5)
@@ -89,7 +76,7 @@ with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
     
-    # 점주 등록 로직 (기존 성공한 방식 유지)
+    # 1. 신규 점주 등록
     with st.expander("➕ 신규 점주 등록"):
         new_name = st.text_input("새 점주 성함")
         if st.button("점주 영구 등록"):
@@ -98,19 +85,40 @@ with st.sidebar:
                 requests.post(API_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
                 st.success("등록 완료!"); st.cache_data.clear(); time.sleep(1); st.rerun()
 
+    # ⭐ [추가 기능] 현재 등록된 점주 리스트 표시
+    st.write("---")
+    st.subheader("👥 현재 등록된 점주 리스트")
+    unique_owners = sorted(list(set([name.split('|')[0].strip() for name in df['owner'] if name.strip() and name != 'owner'])))
+    
+    if unique_owners:
+        # 리스트 형태로 깔끔하게 표시
+        for owner in unique_owners:
+            st.write(f"• **{owner}**")
+    else:
+        st.write("등록된 점주가 없습니다.")
+
+    st.write("---")
+    selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
+    
+    # 점주 선택 시 지도 이동 로직 유지
+    if selected_owner != "선택":
+        target_data = df[(df['owner'].str.contains(selected_owner, na=False)) & (df['lat'] != 0)]
+        if not target_data.empty:
+            if st.button(f"📍 {selected_owner}님 위치로 이동"):
+                st.session_state.map_center = [target_data.iloc[0]['lat'], target_data.iloc[0]['lon']]
+                st.rerun()
+
     st.markdown("---")
     st.header("2️⃣ 영업권 구역 선점")
     search_addr = st.text_input("아파트명 또는 주소 입력")
     
     if st.button("🔍 위치 찾기", use_container_width=True):
-        if search_addr:
-            # 🔴 카카오 승인 없이도 주소를 찾아오는 새 엔진 사용
-            results = get_location_alternative(search_addr)
-            if results:
-                st.session_state.search_results = results
-                st.session_state.map_center = [results[0]['lat'], results[0]['lon']]
-                st.rerun()
-            else: st.error("주소를 찾을 수 없습니다. 더 정확하게 입력해주세요.")
+        results = get_location_alternative(search_addr)
+        if results:
+            st.session_state.search_results = results
+            st.session_state.map_center = [results[0]['lat'], results[0]['lon']]
+            st.rerun()
+        else: st.error("주소를 찾을 수 없습니다.")
 
     if st.session_state.search_results:
         res_options = { r['display_name']: r for r in st.session_state.search_results }
@@ -122,19 +130,14 @@ with st.sidebar:
 
 # --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
-
-# 
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
-# 기존 점주 마커 표시
 for _, row in df.iterrows():
     if row['lat'] != 0:
         folium.Marker([row['lat'], row['lon']], popup=str(row['owner'])).add_to(m)
 
-# 검색 중인 임시 위치 표시
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
 
-# 지도 출력 및 강제 새로고침 키 적용
 st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}")
