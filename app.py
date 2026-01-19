@@ -67,13 +67,14 @@ def get_data_cached(api_url):
 
 df = get_data_cached(API_URL)
 
-# 지명 간소화 로직 (새로 추가)
+# ⭐ 지명 간소화 로직 (콤마 기준으로 첫 번째만 남김)
 def simplify_name(full_name):
-    # [지점] 이나 [동네] 꼬리표 제거 후 핵심만 추출
+    # 1. [지점] 이나 [동네] 꼬리표 제거
     clean = full_name.replace("[지점]", "").replace("[동네]", "").strip()
-    # "아파트"가 포함된 경우 너무 길면 잘라내거나 핵심 키워드만 유지
-    if "아파트" in clean:
-        return clean.split("아파트")[0] + "아파트"
+    # 2. 콤마(,)가 있다면 가장 앞에 있는 핵심 지명만 추출
+    if "," in clean:
+        clean = clean.split(",")[0].strip()
+    # 3. 불필요한 공백 제거 후 반환
     return clean
 
 if 'map_center' not in st.session_state: st.session_state.map_center = [35.1796, 129.0756]
@@ -104,13 +105,13 @@ with st.sidebar:
         
         if not owner_data.empty:
             for idx, row in owner_data.iterrows():
-                # ⭐ [수정 포인트] 지명 간소화 적용
-                original_display = row['owner'].split('|')[-1].strip()
-                short_display = simplify_name(original_display)
+                # ⭐ [핵심 수정] 리스트에 보일 이름을 짧게 가공
+                full_place_info = row['owner'].split('|')[-1].strip()
+                short_display = simplify_name(full_place_info)
                 
                 col1, col2, col3 = st.columns([2.5, 1, 1])
                 with col1:
-                    # 간략해진 이름으로 버튼 표시
+                    # 짧아진 이름으로 버튼 생성
                     if st.button(f"🏠 {short_display}", key=f"goto_{idx}", use_container_width=True):
                         st.session_state.map_center = [row['lat'], row['lon']]
                         st.rerun()
@@ -125,7 +126,7 @@ with st.sidebar:
 
             if 'edit_idx' in st.session_state:
                 edit_row = df.loc[st.session_state.edit_idx]
-                st.info(f"선택한 구역: {edit_row['owner'].split('|')[-1].strip()}")
+                st.info(f"수정 중: {simplify_name(edit_row['owner'].split('|')[-1].strip())}")
                 new_place_name = st.text_input("새로운 아파트/동네 이름 입력")
                 if st.button("이름 변경 완료"):
                     if new_place_name:
