@@ -8,14 +8,14 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 성능 최적화 (💡 사이드바 기본 열림 유지)
+# 1. 페이지 설정 및 성능 최적화 (기본 사이드바 열림 설정 유지)
 st.set_page_config(
     page_title="소중한밥상 통합 관제 시스템", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 💡 [핵심] 사이드바 화살표 버튼 옆에 '사이드바' 글자 강제 삽입 CSS
+# 💡 [핵심] 화살표(>>)를 🆑 클릭 버튼으로 교체하는 강력한 CSS
 st.markdown("""
     <style>
         /* 1. 사이드바 배경색 (연한 빨강 유지) */
@@ -23,37 +23,35 @@ st.markdown("""
             background-color: #FFF0F0;
         }
         
-        /* 2. 사이드바 열기 버튼 스타일 (글자 추가 및 시인성 강화) */
+        /* 2. 기존 화살표 아이콘 숨기기 */
+        [data-testid="stSidebarCollapsedControl"] svg {
+            display: none !important;
+        }
+        
+        /* 3. 화살표 자리에 🆑 클릭 버튼 강제 생성 */
         [data-testid="stSidebarCollapsedControl"] {
-            background-color: #FF4B4B !important; /* 진한 빨강 배경 */
+            background-color: #FF4B4B !important; /* 진한 빨강 */
             color: white !important;
-            border-radius: 0 10px 10px 0 !important;
-            width: 140px !important; /* 글자가 들어갈 수 있게 가로 길이 확보 */
-            height: 55px !important; /* 버튼 높이 조정 */
+            border-radius: 0 15px 15px 0 !important;
+            width: 160px !important; /* 버튼 가로 길이 */
+            height: 65px !important; /* 버튼 세로 높이 */
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             position: fixed !important;
             left: 0 !important;
-            top: 25px !important;
-            box-shadow: 4px 4px 12px rgba(0,0,0,0.4) !important;
-            z-index: 9999999 !important;
+            top: 20px !important;
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.5) !important;
+            z-index: 1000000 !important;
+            cursor: pointer !important;
         }
         
-        /* 화살표 아이콘 크기 조정 */
-        [data-testid="stSidebarCollapsedControl"] svg {
-            fill: white !important;
-            width: 28px !important;
-            height: 28px !important;
-        }
-        
-        /* 💡 사장님 요청: 화살표 옆에 '사이드바' 글자 추가 */
+        /* 사장님 요청: 🆑 이모지와 클릭 문구 삽입 */
         [data-testid="stSidebarCollapsedControl"]::after {
-            content: " 사이드바" !important;
-            font-weight: 800 !important;
+            content: "🆑 클릭해서 메뉴열기" !important;
+            font-weight: 900 !important;
             color: white !important;
-            font-size: 18px !important;
-            margin-left: 5px !important;
+            font-size: 17px !important;
             white-space: nowrap !important;
         }
     </style>
@@ -63,7 +61,7 @@ st.markdown("""
 API_URL = "https://script.google.com/macros/s/AKfycbxDw8kU3K2LzcaM0zOStvwBdsZs98zyjNzQtgxJlRnZcjTCA70RUEQMLmg4lHTCb9uQ/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
 
-# 터보 데이터 캐싱 (유지)
+# 터보 데이터 캐싱 (속도 최적화 유지)
 @st.cache_data(ttl=60)
 def get_data_cached(api_url):
     try:
@@ -79,7 +77,7 @@ def get_data_cached(api_url):
     except:
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 주소 파싱 (대한민국 제거 로직 유지)
+# 상세 지명 추출 로직 (대한민국 제거 유지)
 def parse_detailed_address(address_str):
     if not address_str or address_str == "대한민국":
         return "지정 위치"
@@ -87,7 +85,7 @@ def parse_detailed_address(address_str):
     filtered_parts = [p for p in parts if p != "대한민국"]
     return filtered_parts[0] if filtered_parts else "지정 위치"
 
-# 스마트 검색 엔진 (유사 리스트 유지)
+# 스마트 검색 엔진 (유사 주소 리스트 유지)
 @st.cache_data(ttl=3600)
 def get_location_smart(query, api_key):
     headers = {"Authorization": f"KakaoAK {api_key}"}
@@ -119,7 +117,7 @@ if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'prev_selected_owner' not in st.session_state: st.session_state.prev_selected_owner = "선택"
 
-# --- 사이드바 관리 메뉴 ---
+# --- 사이드바 관리 메뉴 (연한 빨강 배경) ---
 with st.sidebar:
     st.title("🍱 소중한밥상 관리")
     st.header("👤 점주 관리")
@@ -196,7 +194,7 @@ with st.sidebar:
                 for _, row in df.iterrows():
                     if row['lat'] != 0:
                         row_owner_only = str(row['owner']).split('|')[0].strip()
-                        # 본인 중복 선점은 허용
+                        # 본인 중복 선점은 허용 로직 유지
                         if row_owner_only == selected_owner: continue
                         dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
                         existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
@@ -211,10 +209,11 @@ with st.sidebar:
                     st.session_state.temp_loc = None
                     clear_cache(); st.rerun()
 
-# --- 메인 화면 ---
+# --- 메인 화면: 실시간 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
+# 기등록 데이터 표시 (파란색/빨간색 원형 영업권)
 for _, row in df.iterrows():
     if row['lat'] != 0:
         owner_name = str(row['owner']).split('|')[0].strip()
@@ -222,19 +221,21 @@ for _, row in df.iterrows():
         folium.Marker([row['lat'], row['lon']], popup=str(row['owner']), icon=folium.Icon(color=color)).add_to(m)
         folium.Circle(location=[row['lat'], row['lon']], radius=1000 if "[동네]" in str(row['owner']) else 100, color=color, fill=True, fill_opacity=0.15).add_to(m)
 
+# 작업 중인 임시 위치 (초록색 별)
 if st.session_state.temp_loc:
     t = st.session_state.temp_loc
     folium.Marker([t['lat'], t['lon']], icon=folium.Icon(color="green", icon="star")).add_to(m)
     folium.Circle(location=[t['lat'], t['lon']], radius=1000 if t.get('is_area', False) else 100, color="green", dash_array='5, 5').add_to(m)
 
+# 지도 출력 및 클릭 이벤트 감지
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 지도 클릭 시 미세 조정 및 상세 지명 자동 추출 (속도 유지)
+# 지도 클릭 시 미세 조정 및 구체적 지명 자동 추출 (터보 속도 유지)
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
         try:
-            geolocator = Nominatim(user_agent=f"sobap_final_ui_v6_{int(time.time())}")
+            geolocator = Nominatim(user_agent=f"sobap_final_emoji_v7_{int(time.time())}")
             location = geolocator.reverse((c_lat, c_lon), language='ko')
             full_addr = location.address if location else f"좌표: {c_lat:.4f}"
             detailed_name = parse_detailed_address(full_addr)
