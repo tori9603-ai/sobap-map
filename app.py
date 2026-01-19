@@ -30,9 +30,9 @@ st.markdown("""
 # ⚠️ 사장님 마스터코딩 정보 (최신 URL 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbwyveXED04ihVIn8TjJOkiLrlY4vCZVAY_g7SbGbQ5ndKPFzeYPA7kbU8h4SBiQoG9S/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사
+SONGDO_HQ = [37.385, 126.654] #
 
-# 세션 상태 초기화
+# --- 세션 상태 초기화 (오류 방지 필수 로직) ---
 if 'df' not in st.session_state: st.session_state.df = pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -103,7 +103,6 @@ with st.sidebar:
     
     selected_branch = "선택"
     if selected_owner != "선택":
-        # ⭐ 점주 수정/삭제 버튼 추가
         col_oe, col_od = st.columns(2)
         if col_oe.button(f"📝 이름수정", key="btn_oe"): st.session_state.edit_owner = True
         if col_od.button(f"❌ 점주삭제", key="btn_od"): st.session_state.delete_owner = True
@@ -116,7 +115,7 @@ with st.sidebar:
                 st.session_state.df = fetch_data(API_URL); st.rerun()
 
         if st.session_state.get('delete_owner'):
-            st.error(f"'{selected_owner}'님과 하위 모든 지점을 삭제할까요?")
+            st.warning(f"'{selected_owner}'님과 하위 모든 지점을 삭제할까요?")
             if st.button("네, 전체 삭제합니다", key="confirm_od"):
                 requests.post(API_URL, data=json.dumps({"action": "delete_owner_entirely", "owner_name": selected_owner}))
                 st.session_state.delete_owner = False
@@ -129,11 +128,25 @@ with st.sidebar:
         selected_branch = st.selectbox("2️⃣ 관리할 지점 선택", ["선택"] + branches)
         
         if selected_branch != "선택":
+            # ⭐ 지점 수정/삭제 버튼 추가
             col_be, col_bd = st.columns(2)
             if col_be.button(f"📝 지점수정", key="btn_be"): st.session_state.edit_branch = True
             if col_bd.button(f"❌ 지점삭제", key="btn_bd"): st.session_state.delete_branch = True
-            
-            # (지점 수정/삭제 로직 유지)
+
+            if st.session_state.get('edit_branch'):
+                new_b_name = st.text_input(f"'{selected_branch}'의 새 이름")
+                if st.button("지점 수정 완료", key="confirm_be"):
+                    requests.post(API_URL, data=json.dumps({"action": "rename_branch_entirely", "owner_name": selected_owner, "old_branch_name": selected_branch, "new_branch_name": new_b_name}))
+                    st.session_state.edit_branch = False
+                    st.session_state.df = fetch_data(API_URL); st.rerun()
+
+            if st.session_state.get('delete_branch'):
+                st.warning(f"'{selected_branch}' 지점의 모든 구역을 삭제할까요?")
+                if st.button("네, 지점 삭제합니다", key="confirm_bd"):
+                    requests.post(API_URL, data=json.dumps({"action": "delete_branch_entirely", "owner_name": selected_owner, "branch_name": selected_branch}))
+                    st.session_state.delete_branch = False
+                    st.session_state.df = fetch_data(API_URL); st.rerun()
+
             st.write("---")
             st.markdown(f"#### 🏘️ {selected_branch} 구역 리스트")
             branch_data = owner_data_raw[owner_data_raw['owner'].str.contains(f"\|\s*{selected_branch}\s*\|", na=False)]
@@ -142,11 +155,17 @@ with st.sidebar:
                 c1, c2 = st.columns([4, 1])
                 if c1.button(f"🏠 {short_name}", key=f"go_{idx}", use_container_width=True):
                     st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
-                if c2.button("❌", key=f"del_{idx}"): st.session_state.confirm_delete_id = idx; st.rerun()
+                if c2.button("❌", key=f"del_{idx}"):
+                    st.session_state.confirm_delete_id = idx; st.rerun()
+                
+                if st.session_state.confirm_delete_id == idx:
+                    st.warning("삭제할까요?")
+                    if st.button("확인", key=f"y_{idx}"):
+                        requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
+                        st.session_state.df = fetch_data(API_URL); st.session_state.confirm_delete_id = None; st.rerun()
 
     st.markdown("---")
     st.header("3️⃣ 영업권 신규 선점")
-    # (기존 선점 로직 유지)
     if selected_branch != "선택":
         st.success(f"📍 등록 지점: **{selected_branch}**")
         target_branch = selected_branch
