@@ -25,19 +25,19 @@ st.markdown("""
             content: "🆑 메뉴열기" !important; font-weight: 900 !important; color: white !important; font-size: 17px !important;
         }
         
-        /* 🌟 [추가] 통합 플로팅 대시보드 스타일 (숫자 + 버튼 세트) */
-        .floating-dashboard {
+        /* 🌟 [추가] 통합 플로팅 대시보드 (숫자+버튼 세트) CSS */
+        .floating-stats-panel {
             position: fixed; top: 20px; right: 80px; z-index: 999999;
             display: flex; align-items: center; gap: 15px;
-            background: rgba(255, 255, 255, 0.95); padding: 8px 20px;
-            border-radius: 40px; border: 2.5px solid #FF4B4B;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+            background: rgba(255, 255, 255, 0.95); padding: 10px 25px;
+            border-radius: 50px; border: 2px solid #FF4B4B;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
         }
-        .stat-item { font-size: 14px; font-weight: 800; color: #333; white-space: nowrap; }
+        .stat-label { font-size: 14px; font-weight: 800; color: #333; }
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ 사장님 마스터코딩 정보 (URL 유지)
+# ⚠️ 사장님 마스터코딩 정보 (최신 URL 유지)
 API_URL = "https://script.google.com/macros/s/AKfycbyBZSNYE4mE0YKRvdp4GYjMLeJmwzBIGs3-EmJ2bBNr-yu-fazKw6wFodx_ypM5M2RT/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
 SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사 좌표
@@ -63,7 +63,7 @@ def fetch_data(api_url):
 
 if st.session_state.df.empty: st.session_state.df = fetch_data(API_URL)
 
-# --- [추가] 📊 통계 데이터 미리 계산 ---
+# --- [추가] 📊 통합 플로팅 바 데이터 계산 ---
 total_df = st.session_state.df
 owners_cnt = len(set([str(val).split('|')[0].strip() for val in total_df['owner'] if str(val).strip() and val != 'owner']))
 branches_cnt = len(set(["|".join(str(val).split('|')[:2]).strip() for val in total_df['owner'] if "|" in str(val)]))
@@ -189,18 +189,18 @@ with st.sidebar:
 # --- 🗺️ 메인 지도 및 통합 플로팅 대시보드 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
 
-# 🌟 [추가] 숫자 통계와 버튼이 함께 움직이는 통합 대시보드
+# 🌟 [추가] 숫자 통계와 버튼이 세트인 통합 플로팅 대시보드
 st.markdown(f"""
-    <div class="floating-dashboard">
-        <span class="stat-item">👤 점주: {owners_cnt}명</span>
-        <span style="color: #ddd; font-weight: 300;">|</span>
-        <span class="stat-item">🏢 지점: {branches_cnt}개</span>
+    <div class="floating-stats-panel">
+        <span class="stat-label">👤 점주: {owners_cnt}명</span>
+        <span style="color: #eee;">|</span>
+        <span class="stat-label">🏢 지점: {branches_cnt}개</span>
     </div>
     """, unsafe_allow_html=True)
 
-# 🌟 [추가] 통계 바 옆에 배치되는 다운로드 버튼 (레이아웃 조절)
+# 🌟 [추가] 플로팅 패널 위치에 맞춰 다운로드 버튼 오버레이
 with st.container():
-    c_empty, c_btn = st.columns([8.2, 1.8])
+    c_empty, c_btn = st.columns([8.2, 1.8]) # 플로팅 바 위치와 정렬
     with c_btn:
         csv_data = total_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
@@ -209,13 +209,13 @@ with st.container():
             file_name='소중한밥상_운영현황.csv',
             mime='text/csv',
             use_container_width=True,
-            key="float_excel_btn"
+            key="master_floating_btn"
         )
 
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
 # 1. 기존 데이터 표시 (가변 반경 적용)
-for _, row in st.session_state.df.iterrows():
+for _, row in total_df.iterrows():
     if row['lat'] != 0:
         owner_name = str(row['owner']).split('|')[0].strip()
         color = "red" if owner_name == selected_owner else "blue"
