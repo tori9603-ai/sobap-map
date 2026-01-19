@@ -8,7 +8,7 @@ import time
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# 1. 페이지 설정 및 디자인 (사장님 디자인 100% 유지)
+# 1. 페이지 설정 및 디자인 (사장님 전용 핑크 테마 유지)
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -27,12 +27,22 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ⚠️ [수정됨] 사장님이 새로 배포하신 구글 앱스 스크립트 URL 반영
+# ⚠️ 사장님 마스터코딩 고유 정보 (송도 본사 및 최신 URL)
 API_URL = "https://script.google.com/macros/s/AKfycbzGPuqM1R9ZtaWbeViDffgarMxdbBSZjkTjZmvreO1r21LjXUrRavp3VvlKrIdx40Rx/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
-SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사 좌표
+SONGDO_HQ = [37.385, 126.654] # 인천 송도 본사 위치
 
-# --- 데이터 로드 함수 (고속 로딩 최적화) ---
+# --- 🛠️ 오류 해결: 세션 상태(Session State) 초기화 로직 ---
+# 오류의 원인이었던 'search_results'를 포함하여 모든 필수 변수를 선제적으로 선언합니다.
+if 'df' not in st.session_state: st.session_state.df = pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
+if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
+if 'search_results' not in st.session_state: st.session_state.search_results = [] # 오류 해결 포인트
+if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
+if 'prev_owner' not in st.session_state: st.session_state.prev_owner = "선택"
+if 'confirm_delete_id' not in st.session_state: st.session_state.confirm_delete_id = None
+if 'overlap_error' not in st.session_state: st.session_state.overlap_error = None
+
+# 데이터 로드 함수
 def fetch_data(api_url):
     try:
         response = requests.get(api_url, allow_redirects=True, timeout=10)
@@ -44,18 +54,15 @@ def fetch_data(api_url):
         return df
     except: return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
 
-# 세션 상태 초기화
-if 'df' not in st.session_state: st.session_state.df = fetch_data(API_URL)
-if 'map_center' not in st.session_state: st.session_state.map_center = SONGDO_HQ
-if 'temp_loc' not in st.session_state: st.session_state.temp_loc = None
-if 'prev_owner' not in st.session_state: st.session_state.prev_owner = "선택"
-if 'confirm_delete_id' not in st.session_state: st.session_state.confirm_delete_id = None
+# 첫 로딩 시 데이터 가져오기
+if st.session_state.df.empty:
+    st.session_state.df = fetch_data(API_URL)
 
 def simplify_name(n):
     c = n.replace("[지점]", "").replace("[동네]", "").strip()
     return c.split(",")[0].strip() if "," in c else c
 
-# 검색 엔진 (Nominatim + Kakao 하이브리드)
+# 검색 엔진 (하이브리드)
 def get_location_alternative(query):
     results = []
     try:
@@ -91,35 +98,18 @@ with st.sidebar:
                 requests.post(API_URL, data=json.dumps({"action": "add", "owner": new_name, "address": "신규등록", "lat": 0, "lon": 0}))
                 st.session_state.df = fetch_data(API_URL); st.session_state.map_center = SONGDO_HQ; st.success("등록 완료!"); time.sleep(1); st.rerun()
 
-    # 등록된 점주 목록 추출
     unique_owners = sorted(list(set([name.split('|')[0].strip() for name in st.session_state.df['owner'] if name.strip() and name != 'owner'])))
     
-    with st.expander("👥 등록 점주 이름수정/삭제"):
+    with st.expander("👥 점주 이름수정/삭제"):
         for o_name in unique_owners:
             col_n, col_e, col_d = st.columns([2, 0.5, 0.5])
             col_n.write(f"**{o_name}**")
-            if col_e.button("📝", key=f"edit_owner_{o_name}"): st.session_state.edit_owner_target = o_name
-            if col_d.button("❌", key=f"del_owner_{o_name}"): st.session_state.del_owner_target = o_name
-
-        if st.session_state.get('edit_owner_target'):
-            target = st.session_state.edit_owner_target
-            new_o_name = st.text_input(f"'{target}'님의 새 이름")
-            if st.button("변경 확정"):
-                requests.post(API_URL, data=json.dumps({"action": "rename_owner_entirely", "old_name": target, "new_name": new_o_name}))
-                del st.session_state.edit_owner_target
-                st.session_state.df = fetch_data(API_URL); st.rerun()
-        
-        if st.session_state.get('del_owner_target'):
-            target = st.session_state.del_owner_target
-            st.warning(f"'{target}' 점주와 모든 영업권을 삭제할까요?")
-            if st.button("네, 전체 삭제합니다"):
-                requests.post(API_URL, data=json.dumps({"action": "delete_owner_entirely", "owner_name": target}))
-                del st.session_state.del_owner_target
-                st.session_state.df = fetch_data(API_URL); st.rerun()
+            if col_e.button("📝", key=f"e_o_{o_name}"): st.session_state.edit_owner_target = o_name
+            if col_d.button("❌", key=f"d_o_{o_name}"): st.session_state.del_owner_target = o_name
 
     st.write("---")
     
-    # 점주 선택 시 자동 지도 이동
+    # 🏢 다중 지점 통합 관리 셀렉트박스
     selected_owner = st.selectbox("관리할 점주 선택", ["선택"] + unique_owners)
     if selected_owner != st.session_state.prev_owner:
         if selected_owner != "선택":
@@ -132,54 +122,52 @@ with st.sidebar:
         st.session_state.prev_owner = selected_owner; st.rerun()
 
     if selected_owner != "선택":
-        st.markdown("---")
-        st.header("📍 선점 내역")
+        st.markdown(f"### 📍 {selected_owner}님 지점 관리") #
         owner_data = st.session_state.df[st.session_state.df['owner'].str.contains(f"^{selected_owner}\s*\|", na=False)]
         
         if not owner_data.empty:
-            # 그룹형 리스트 표시 (개별지점 100m / 동네구역 1km)
-            for title, pattern, icon in [("📍 개별 지점 (100m)", "^((?!\[동네\]).)*$", "🏠"), ("🏘️ 동네 구역 (1km)", "\[동네\]", "🏘️")]:
+            for title, pattern, icon in [("🏢 개별 지점", "^((?!\[동네\]).)*$", "🏠"), ("🏘️ 동네 구역", "\[동네\]", "🏘️")]:
                 subset = owner_data[owner_data['owner'].str.contains(pattern, na=True)]
                 if not subset.empty:
-                    st.markdown(f"##### {title}")
+                    st.markdown(f"**{title}**")
                     for idx, row in subset.iterrows():
-                        name = simplify_name(row['owner'].split('|')[-1])
+                        # 이미지처럼 주소를 짧게 가공하여 표시
+                        branch_name = simplify_name(row['owner'].split('|')[-1])
                         c1, c2 = st.columns([4, 1])
                         with c1:
-                            if st.button(f"{icon} {name}", key=f"go_{idx}", use_container_width=True):
+                            if st.button(f"{icon} {branch_name}", key=f"br_{idx}", use_container_width=True):
                                 st.session_state.map_center = [row['lat'], row['lon']]; st.rerun()
                         with c2:
-                            if st.button("❌", key=f"del_{idx}"):
-                                st.session_state.confirm_delete_id = idx; st.rerun()
+                            if st.button("❌", key=f"del_br_{idx}"): st.session_state.confirm_delete_id = idx; st.rerun()
                         
                         if st.session_state.confirm_delete_id == idx:
-                            st.warning(f"정말 삭제하시겠습니까?")
-                            col_y, col_n = st.columns(2)
-                            if col_y.button("확인", key=f"y_{idx}"):
+                            st.warning("삭제할까요?")
+                            if st.button("확인", key=f"y_br_{idx}"):
                                 requests.post(API_URL, data=json.dumps({"action": "delete", "row_index": int(idx) + 2}))
                                 st.session_state.df = fetch_data(API_URL); st.session_state.confirm_delete_id = None; st.rerun()
-                            if col_n.button("취소", key=f"n_{idx}"): st.session_state.confirm_delete_id = None; st.rerun()
-        else: st.info("선점 내역이 없습니다.")
+                            if st.button("취소", key=f"n_br_{idx}"):
+                                st.session_state.confirm_delete_id = None; st.rerun()
+        else:
+            st.info("선점한 지점이 없습니다.")
 
     st.markdown("---")
-    st.header("2️⃣ 영업권 구역 선점")
+    st.header("2️⃣ 신규 지점 선점")
     search_addr = st.text_input("아파트명 또는 주소 입력", key="s_box")
-    if st.button("🔍 위치 찾기", use_container_width=True):
+    if st.button("🔍 위치 확인", use_container_width=True):
         res = get_location_alternative(search_addr)
         if res:
             st.session_state.search_results = res
             st.session_state.map_center = [res[0]['lat'], res[0]['lon']]; st.rerun()
-        else: st.error("주소를 찾을 수 없습니다.")
 
+    # ⭐ 오류 방지: 세션 상태를 체크하여 검색 결과가 있을 때만 위젯 표시
     if st.session_state.search_results:
         res_opts = { r['display_name']: r for r in st.session_state.search_results }
         sel = st.selectbox("정확한 위치 선택", list(res_opts.keys()))
-        if st.button("📍 위치 확인"):
+        if st.button("📍 별 띄우기"):
             target = res_opts[sel]
             st.session_state.temp_loc = target
             st.session_state.map_center = [target['lat'], target['lon']]
             
-            # 타 점주 중복 체크
             new_r = 1000 if target['is_area'] else 100
             blocking = None
             for _, row in st.session_state.df.iterrows():
@@ -195,16 +183,13 @@ with st.sidebar:
         if st.session_state.get('overlap_error'): st.error(st.session_state.overlap_error)
         elif selected_owner != "선택":
             t = st.session_state.temp_loc
-            if st.button(f"🚩 선점하기 ({1000 if t['is_area'] else 100}m)", use_container_width=True):
+            if st.button(f"🚩 {selected_owner}님 지점으로 등록", use_container_width=True):
                 payload = {"action": "add", "owner": f"{selected_owner} | {'[동네] ' if t['is_area'] else '[지점] '}{simplify_name(t['display_name'])}", "address": t['display_name'], "lat": t['lat'], "lon": t['lon']}
                 requests.post(API_URL, data=json.dumps(payload))
                 st.session_state.df = fetch_data(API_URL); st.session_state.temp_loc = None; st.rerun()
 
 # --- 메인 지도 ---
 st.title("🗺️ 소중한밥상 실시간 관제 시스템")
-
-
-
 m = folium.Map(location=st.session_state.map_center, zoom_start=15)
 
 for _, row in st.session_state.df.iterrows():
@@ -224,7 +209,19 @@ if st.session_state.temp_loc:
 
 map_out = st_folium(m, width="100%", height=800, key="main_map")
 
+# 지도 클릭 시 별 위치 이동 및 중복 체크 재실행
 if map_out and map_out.get('last_clicked') and st.session_state.temp_loc:
-    st.session_state.temp_loc['lat'] = map_out['last_clicked']['lat']
-    st.session_state.temp_loc['lon'] = map_out['last_clicked']['lng']
+    clicked_lat = map_out['last_clicked']['lat']
+    clicked_lon = map_out['last_clicked']['lng']
+    st.session_state.temp_loc['lat'] = clicked_lat
+    st.session_state.temp_loc['lon'] = clicked_lon
+    
+    new_r = 1000 if st.session_state.temp_loc.get('is_area') else 100
+    blocking = None
+    for _, row in st.session_state.df.iterrows():
+        if row['lat'] != 0 and str(row['owner']).split('|')[0].strip() != selected_owner:
+            dist = geodesic((clicked_lat, clicked_lon), (row['lat'], row['lon'])).meters
+            exist_r = 1000 if "[동네]" in str(row['owner']) else 100
+            if dist < (new_r + exist_r): blocking = str(row['owner']).split('|')[0].strip(); break
+    st.session_state.overlap_error = f"❌ 등록 불가: {blocking} 점주님과 겹칩니다." if blocking else None
     st.rerun()
