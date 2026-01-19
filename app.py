@@ -35,7 +35,7 @@ st.markdown("""
 
 # ⚠️ 사장님 고유 정보 반영 (REST API 키는 승인과 별개로 검색 기능을 수행합니다)
 API_URL = "https://script.google.com/macros/s/AKfycbw4MGFNridXvxj906TWMp0v37lcB-aAl-EWwC2ellpS98Kgm5k5jda4zRyaIHFDpKtB/exec"
-KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79" 
+KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
 
 @st.cache_data(ttl=5)
 def get_data_cached(api_url):
@@ -207,3 +207,4 @@ if st.session_state.temp_loc:
 
 # 지도 렌더링
 st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center[0]}_{st.session_state.map_center[1]}")
+
