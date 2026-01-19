@@ -11,6 +11,7 @@ from geopy.distance import geodesic
 # 1. 페이지 설정 및 성능 최적화
 st.set_page_config(page_title="소중한밥상 통합 관제 시스템", layout="wide")
 
+# ⚠️ 사장님 고유 정보
 API_URL = "https://script.google.com/macros/s/AKfycbxDw8kU3K2LzcaM0zOStvwBdsZs98zyjNzQtgxJlRnZcjTCA70RUEQMLmg4lHTCb9uQ/exec"
 KAKAO_API_KEY = "57f491c105b67119ba2b79ec33cfff79"
 
@@ -29,6 +30,18 @@ def get_data_cached(api_url):
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
     except:
         return pd.DataFrame(columns=['owner', 'address', 'lat', 'lon'])
+
+# 💡 [개선] 주소 파싱 함수: '대한민국'을 제외하고 가장 구체적인 단위를 추출
+def parse_detailed_address(address_str):
+    if not address_str or address_str == "대한민국":
+        return "지정 위치"
+    # 대한민국, 부산광역시, 서구, 암남동 -> [암남동, 서구, 부산광역시, 대한민국] 순으로 정렬되거나 반대일 수 있음
+    parts = [p.strip() for p in address_str.split(',')]
+    # '대한민국' 단어 제거
+    filtered_parts = [p for p in parts if p != "대한민국"]
+    # 가장 구체적인 부분(보통 리스트의 앞쪽이나 뒤쪽)을 선택
+    # Nominatim의 경우 보통 [건물/번지, 동, 구, 시] 순이므로 첫 번째 요소를 선택
+    return filtered_parts[0] if filtered_parts else "지정 위치"
 
 # 유사 장소 검색 엔진
 @st.cache_data(ttl=3600)
@@ -118,11 +131,13 @@ with st.sidebar:
             sel_name = st.selectbox("정확한 장소를 선택하세요", list(res_options.keys()))
             if st.button("📍 선택한 위치 확인"):
                 target = res_options[sel_name]
+                # 💡 선택한 리스트명에서 구체적인 명칭 추출
+                detailed_name = parse_detailed_address(sel_name)
                 st.session_state.temp_loc = {
                     "lat": float(target['y']), "lon": float(target['x']),
                     "is_area": target.get('is_area', False),
                     "full_addr": target.get('address_name') or sel_name,
-                    "name": target.get('place_name') or sel_name.split(' ')[-1]
+                    "name": detailed_name
                 }
                 st.session_state.map_center = [float(target['y']), float(target['x'])]
                 st.rerun()
@@ -136,18 +151,12 @@ with st.sidebar:
 
                 for _, row in df.iterrows():
                     if row['lat'] != 0:
-                        # 💡 [핵심 로직] 현재 선택된 점주와 기존 데이터의 점주가 같으면 패스!
                         row_owner_only = str(row['owner']).split('|')[0].strip()
-                        if row_owner_only == selected_owner:
-                            continue
-                        
-                        # 다른 점주일 때만 거리 계산
+                        if row_owner_only == selected_owner: continue
                         dist = geodesic(new_pos, (row['lat'], row['lon'])).meters
                         existing_radius = 1000 if "[동네]" in str(row['owner']) else 100
-                        
                         if dist < (new_radius + existing_radius):
-                            is_overlap = True
-                            break
+                            is_overlap = True; break
                 
                 if is_overlap:
                     st.error("해당 아파트는 다른 점주님이 이미 선점 하였습니다")
@@ -175,9 +184,22 @@ if st.session_state.temp_loc:
 
 map_data = st_folium(m, width="100%", height=800, key=f"map_{st.session_state.map_center}", returned_objects=["last_clicked"])
 
-# 클릭 미세 조정
+# 💡 [개선] 지도 클릭 시 주소에서 '대한민국' 제거하고 구체적인 지명만 추출
 if map_data and map_data.get("last_clicked") and st.session_state.temp_loc:
     c_lat, c_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     if round(st.session_state.temp_loc["lat"], 5) != round(c_lat, 5):
-        st.session_state.temp_loc.update({"lat": c_lat, "lon": c_lon, "full_addr": f"직접 지정 ({c_lat:.4f})", "name": "지정 장소"})
+        try:
+            geolocator = Nominatim(user_agent=f"sobap_addr_fix_{int(time.time())}")
+            location = geolocator.reverse((c_lat, c_lon), language='ko')
+            full_addr = location.address if location else f"좌표: {c_lat:.4f}"
+            # 대한민국, 부산광역시... 중 가장 구체적인 단어만 뽑음
+            detailed_name = parse_detailed_address(full_addr)
+        except:
+            full_addr = f"좌표: {c_lat:.4f}"; detailed_name = "지정 위치"
+
+        st.session_state.temp_loc.update({
+            "lat": c_lat, "lon": c_lon, 
+            "full_addr": full_addr, 
+            "name": detailed_name
+        })
         st.rerun()
